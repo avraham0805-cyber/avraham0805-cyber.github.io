@@ -26,10 +26,10 @@ self.addEventListener('activate', (e) => {
 
 function idb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('kesef', 1);
+    const req = indexedDB.open('kesef', 2);
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const s of ['tx', 'rules', 'fixed', 'meta', 'pending']) {
+      for (const s of ['tx', 'rules', 'fixed', 'meta', 'pending', 'snapshots']) {
         if (!db.objectStoreNames.contains(s)) {
           db.createObjectStore(s, { keyPath: s === 'meta' ? 'k' : (s === 'rules' ? 'key' : 'id') });
         }

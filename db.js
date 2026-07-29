@@ -2,7 +2,7 @@
 // סכומים נשמרים כאגורות (מספר שלם) כדי למנוע שגיאות עיגול.
 
 const DB_NAME = 'kesef';
-const DB_VER = 1;
+const DB_VER = 2;
 
 /** @type {IDBDatabase|null} */
 let _db = null;
@@ -33,6 +33,10 @@ export function open() {
       if (!db.objectStoreNames.contains('pending')) {
         // צילומי מסך שהגיעו דרך "שיתוף" וממתינים לפענוח
         db.createObjectStore('pending', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('snapshots')) {
+        // גיבויים מקומיים מתגלגלים — הגנה מפני מחיקה בטעות או קלקול
+        db.createObjectStore('snapshots', { keyPath: 'id' });
       }
       void e;
     };
@@ -202,6 +206,43 @@ export async function exportAll() {
     fixed,
     meta: meta.filter(m => m.k !== 'geminiKey'), // המפתח לא יוצא מהמכשיר
   };
+}
+
+/* ---------- גיבויים מקומיים מתגלגלים ---------- */
+
+const KEEP_SNAPSHOTS = 12;
+
+/** יוצר גיבוי מקומי. reason מופיע ברשימה כדי שיהיה ברור למה הוא נוצר. */
+export async function snapshot(reason = 'אוטומטי') {
+  const data = await exportAll();
+  if (!data.tx.length) return null;
+  const rec = { id: String(Date.now()), at: Date.now(), reason, counts: data.counts, data };
+  await put('snapshots', rec);
+  const rows = await all('snapshots');
+  rows.sort((a, b) => b.at - a.at);
+  for (const old of rows.slice(KEEP_SNAPSHOTS)) await del('snapshots', old.id);
+  await setSetting('lastSnapshot', rec.at);
+  return rec;
+}
+
+/** גיבוי אוטומטי לכל היותר פעם ב-12 שעות — שקוף למשתמש */
+export async function maybeSnapshot(reason = 'אוטומטי') {
+  const last = await setting('lastSnapshot', 0);
+  if (Date.now() - last < 12 * 3600 * 1000) return null;
+  return snapshot(reason);
+}
+
+export async function snapshots() {
+  const rows = await all('snapshots');
+  rows.sort((a, b) => b.at - a.at);
+  return rows.map(r => ({ id: r.id, at: r.at, reason: r.reason, counts: r.counts }));
+}
+
+export async function restoreSnapshot(id) {
+  const rec = await get('snapshots', id);
+  if (!rec) throw new Error('הגיבוי לא נמצא');
+  await snapshot('לפני שחזור');
+  return importAll(rec.data, { merge: false });
 }
 
 export async function importAll(data, { merge = true } = {}) {

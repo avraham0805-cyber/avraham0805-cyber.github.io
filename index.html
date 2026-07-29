@@ -328,13 +328,21 @@ a{color:var(--info)}
     </div>
 
     <div class="card">
-      <h3>גיבוי</h3>
+      <h3>גיבוי החוצה</h3>
       <div id="s-backupinfo" class="muted" style="margin-bottom:11px"></div>
-      <div class="two">
-        <button class="btn ghost" id="s-export">ייצוא JSON</button>
+      <button class="btn" id="s-export">גיבוי עכשיו</button>
+      <div class="hint">בטלפון נפתח תפריט השיתוף — שמור לגוגל דרייב או שלח לעצמך. במחשב הקובץ פשוט יורד.</div>
+      <div class="two" style="margin-top:11px">
         <button class="btn ghost" id="s-csv">ייצוא CSV</button>
+        <button class="btn ghost" id="s-import">ייבוא מקובץ</button>
       </div>
-      <button class="btn ghost" id="s-import" style="margin-top:9px">ייבוא מקובץ</button>
+    </div>
+
+    <div class="card">
+      <h3>גיבויים על המכשיר</h3>
+      <div id="s-snaps"></div>
+      <div class="hint">נשמרים אוטומטית פעם ביום ולפני כל פעולה מסוכנת. שומרים 12 אחרונים.
+        מגנים מפני מחיקה בטעות — <b>לא</b> מפני אובדן הטלפון. לזה יש את הגיבוי החוצה למעלה.</div>
     </div>
 
     <div class="card">

@@ -94,6 +94,9 @@ async function init() {
   wire();
   render();
 
+  // גיבוי מקומי שקוף — לכל היותר פעם ב-12 שעות
+  DB.maybeSnapshot('פתיחת אפליקציה').catch(() => {});
+
   // צילומים שהגיעו דרך "שיתוף" מהטלפון
   const pend = await DB.all('pending');
   if (pend.length || new URLSearchParams(location.search).has('shared')) {
@@ -432,8 +435,20 @@ async function renderSettings() {
   $('#s-budget').value = S.budget ? S.budget / 100 : '';
   $('#s-count').textContent = `${S.txs.length} תנועות · ${S.rules.length} כללים`;
   $('#s-backupinfo').textContent = S.lastExport
-    ? `גיבוי אחרון: ${new Date(S.lastExport).toLocaleString('he-IL')}`
-    : 'עוד לא בוצע גיבוי. הנתונים קיימים רק על המכשיר הזה.';
+    ? `גיבוי אחרון החוצה: ${new Date(S.lastExport).toLocaleString('he-IL')}`
+    : 'עוד לא בוצע גיבוי החוצה. הנתונים קיימים רק על המכשיר הזה.';
+
+  const snaps = await DB.snapshots();
+  $('#s-snaps').innerHTML = snaps.length
+    ? snaps.map(s => `<div class="tx">
+        <div class="ic">🕘</div>
+        <div class="mid">
+          <div class="nm">${new Date(s.at).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+          <div class="mt">${esc(s.reason)} · ${s.counts.tx} תנועות</div>
+        </div>
+        <button class="opt" data-restore="${s.id}">שחזור</button>
+      </div>`).join('')
+    : '<div class="muted">אין עדיין גיבויים מקומיים.</div>';
 
   const key = await DB.setting('geminiKey');
   $('#s-key').value = key || '';
@@ -836,12 +851,31 @@ function download(name, text, type = 'application/json') {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+/**
+ * גיבוי החוצה מהמכשיר. בטלפון נפתחת תפריט השיתוף — שמירה לגוגל דרייב, וואטסאפ
+ * לעצמך, מייל, מה שנוח. במחשב פשוט יורד קובץ.
+ */
 async function doExport() {
   const data = await DB.exportAll();
-  download(`kesef-${todayISO()}.json`, JSON.stringify(data, null, 1));
+  const json = JSON.stringify(data, null, 1);
+  const name = `kesef-${todayISO()}.json`;
+  let shared = false;
+
+  try {
+    const file = new File([json], name, { type: 'application/json' });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'גיבוי כסף' });
+      shared = true;
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return;   // המשתמש ביטל — לא לסמן כגובה
+  }
+  if (!shared) download(name, json);
+
   S.lastExport = Date.now();
   await DB.setSetting('lastExport', S.lastExport);
-  toast('גובה');
+  await DB.snapshot('ידני');
+  toast(shared ? 'הגיבוי נשלח' : 'הגיבוי ירד');
   render();
 }
 
@@ -979,15 +1013,25 @@ function wire() {
     if (t.closest('#s-export')) { await doExport(); return; }
     if (t.closest('#s-csv'))    { doCsv(); return; }
     if (t.closest('#s-import')) { $('#jsonin').click(); return; }
+
+    const rs = t.closest('[data-restore]');
+    if (rs) {
+      if (!confirm('לשחזר לגיבוי הזה? המצב הנוכחי יוחלף (ונשמר כגיבוי לפני כן).')) return;
+      const st = await DB.restoreSnapshot(rs.dataset.restore);
+      await reload(); toast(`שוחזרו ${st.tx} תנועות`); render(); return;
+    }
+
     if (t.closest('#s-clearrules')) {
       if (!confirm('לאפס את המילון הלומד?')) return;
+      await DB.snapshot('לפני איפוס מילון');
       await DB.clear('rules'); await reload(); toast('אופס'); render(); return;
     }
     if (t.closest('#s-wipe')) {
-      if (!confirm('למחוק את כל התנועות, הכללים וההוצאות הקבועות? אין דרך חזרה.')) return;
-      if (!confirm('בטוח? מומלץ לייצא גיבוי קודם.')) return;
+      if (!confirm('למחוק את כל התנועות, הכללים וההוצאות הקבועות?')) return;
+      if (!confirm('בטוח? ייווצר גיבוי מקומי אוטומטי שאפשר לשחזר ממנו.')) return;
+      await DB.snapshot('לפני מחיקה מלאה');
       await DB.clear('tx'); await DB.clear('rules'); await DB.clear('fixed');
-      await reload(); toast('נמחק'); render(); return;
+      await reload(); toast('נמחק — ניתן לשחזר מהגיבויים'); render(); return;
     }
   });
 
@@ -1036,6 +1080,7 @@ function wire() {
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
+      await DB.snapshot('לפני ייבוא');
       const st = await DB.importAll(data);
       await reload();
       toast(`יובאו ${st.tx} תנועות`);
