@@ -1,0 +1,36 @@
+{
+  "name": "כסף — מעקב הוצאות",
+  "short_name": "כסף",
+  "id": "kesef",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d0f13",
+  "theme_color": "#0d0f13",
+  "dir": "rtl",
+  "lang": "he",
+  "description": "מעקב הוצאות פרטי — מזומן בהקשה אחת, צילומי מסך מפוענחים אוטומטית, הכל נשאר על המכשיר.",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "./share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [
+        { "name": "image", "accept": ["image/png", "image/jpeg", "image/webp", "image/*"] }
+      ]
+    }
+  },
+  "shortcuts": [
+    { "name": "הוצאה חדשה", "short_name": "הוצאה", "url": "./?add=1" },
+    { "name": "צילום מסך", "short_name": "צילום", "url": "./?shot=1" }
+  ]
+}
