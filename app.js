@@ -68,7 +68,7 @@ const S = {
   budget: 0, fx: { USD: 3.7, EUR: 4.0, GBP: 4.7 },
   month: curMonth(),
   view: 'home',
-  q: '', filter: 'all',
+  q: '', filter: 'all', deptFilter: null,
   lastExport: 0,
   hasKey: false,
 };
@@ -393,10 +393,14 @@ const FILTERS = [
 ];
 
 function renderAll() {
-  $('#filters').innerHTML = FILTERS.map(([k, l]) =>
-    `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('');
+  const D = S.deptFilter ? dept(S.deptFilter) : null;
+  $('#filters').innerHTML =
+    (D ? `<button data-f="cleardept" class="on">${D.icon} ${esc(D.label)} ✕</button>` : '') +
+    FILTERS.map(([k, l]) =>
+      `<button data-f="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('');
 
   let rows = S.txs;
+  if (S.deptFilter) rows = rows.filter(t => t.dept === S.deptFilter);
   const q = S.q.trim().toLowerCase();
   if (q) rows = rows.filter(t =>
     (t.merchant || '').toLowerCase().includes(q) ||
@@ -467,14 +471,15 @@ const ADD = {
 function openAdd(preset = {}) {
   Object.assign(ADD, {
     amount: '', dept: 'food', cat: 'general', method: 'cash',
-    date: todayISO(), merchant: '', income: false, business: false, currency: 'ILS', editId: null,
+    date: todayISO(), merchant: '', income: false, business: false, currency: 'ILS',
+    editId: null, _touched: false,
   }, preset);
   $('#add-title').textContent = ADD.editId ? 'עריכת תנועה' : 'הוצאה חדשה';
   $('#add-merch').value = ADD.merchant;
   $('#add-date').value = ADD.date;
   drawAdd();
   openSheet('sh-add');
-  }
+}
 
 function drawAdd() {
   // שומר בדיוק את מה שהוקלד — כולל אפס אחרי הנקודה — ומוסיף מפרידי אלפים
@@ -841,8 +846,6 @@ async function doExport() {
 }
 
 function doCsv() {
-  const cols = ['dateBuy', 'dateCharge', 'merchant', 'dept', 'cat', 'category', 'amount', 'currency', 'ils',
-    'kind', 'need', 'scope', 'method', 'installment', 'note', 'source', 'flow'];
   const head = ['תאריך קנייה', 'תאריך חיוב', 'בית עסק', 'מחלקה', 'קטגוריה', 'תווית', 'סכום מקורי', 'מטבע', 'שקלים',
     'סוג', 'חיוניות', 'היקף', 'אמצעי', 'תשלומים', 'הערה', 'מקור', 'זרימה'];
   const rows = S.txs.map(t => [
@@ -854,7 +857,6 @@ function doCsv() {
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const csv = '﻿' + [head.map(q).join(','), ...rows.map(r => r.map(q).join(','))].join('\r\n');
   download(`kesef-${todayISO()}.csv`, csv, 'text/csv');
-  void cols;
   toast('CSV ירד');
 }
 
@@ -936,11 +938,19 @@ function wire() {
 
     // מסננים
     const f = t.closest('[data-f]');
-    if (f) { S.filter = f.dataset.f; renderAll(); return; }
+    if (f) {
+      if (f.dataset.f === 'cleardept') S.deptFilter = null;
+      else S.filter = f.dataset.f;
+      renderAll(); return;
+    }
 
-    // מחלקה בדוח החודשי → סינון
+    // מחלקה בדוח החודשי → סינון לפי אותה מחלקה
     const dp = t.closest('[data-dept]');
-    if (dp) { S.view = 'all'; S.filter = 'all'; S.q = dept(dp.dataset.dept)?.label.split(' ')[0] || ''; $('#q').value = S.q; render(); return; }
+    if (dp) {
+      S.view = 'all'; S.filter = 'all'; S.q = ''; $('#q').value = '';
+      S.deptFilter = dp.dataset.dept;
+      render(); return;
+    }
 
     // הוצאות קבועות
     const fx = t.closest('[data-fixed]');
