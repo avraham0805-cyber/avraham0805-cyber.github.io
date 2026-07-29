@@ -2,435 +2,344 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
-<meta name="theme-color" content="#0d0f13">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="מעקב הוצאות פרטי — הכל נשאר על המכשיר.">
 <title>כסף</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
-<style>
-:root{
-  --bg:#0d0f13; --bg2:#151920; --card:#1a1f28; --card2:#212734;
-  --line:#2a3240; --txt:#e8ecf2; --dim:#8b95a7; --dim2:#5d6675;
-  --accent:#f2c94c; --good:#4ade80; --bad:#f87171; --warn:#fb923c; --info:#60a5fa;
-  --r:16px; --sh:0 4px 20px rgba(0,0,0,.4);
-  --safe-b:env(safe-area-inset-bottom,0px);
-}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;padding:0;height:100%}
-body{
-  background:var(--bg); color:var(--txt);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Rubik,Arial,sans-serif;
-  font-size:16px; line-height:1.45; overscroll-behavior-y:none;
-}
-button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
-button{background:none;border:0;cursor:pointer;padding:0}
-input,select,textarea{
-  background:var(--bg2);border:1px solid var(--line);border-radius:10px;
-  padding:10px 12px;width:100%;outline:none;
-}
-input:focus,select,textarea:focus{border-color:var(--accent)}
-select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);background-position:calc(0% + 14px) 50%,calc(0% + 19px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-left:34px}
-.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
-
-/* ---------- שלד ---------- */
-#app{max-width:560px;margin:0 auto;padding:0 14px calc(96px + var(--safe-b));min-height:100%}
-.view{display:none;animation:fade .18s ease}
-.view.on{display:block}
-@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-
-header.top{display:flex;align-items:center;justify-content:space-between;padding:18px 2px 12px}
-header.top h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.3px}
-.sub{color:var(--dim);font-size:13px}
-
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:12px}
-.card.tight{padding:12px}
-.card h3{margin:0 0 12px;font-size:14px;color:var(--dim);font-weight:600;letter-spacing:.2px}
-
-/* ---------- מסך הבית ---------- */
-.hero{text-align:center;padding:26px 16px 22px;background:linear-gradient(160deg,#1c2230,#141821);border:1px solid var(--line);border-radius:22px;margin-bottom:12px}
-.hero .lbl{color:var(--dim);font-size:13px;margin-bottom:6px}
-.hero .big{font-size:52px;font-weight:800;line-height:1;letter-spacing:-2px}
-.hero .big.neg{color:var(--bad)}
-.hero .big small{font-size:24px;font-weight:600;opacity:.55;margin-inline-start:2px}
-.hero .foot{color:var(--dim);font-size:13px;margin-top:10px}
-.bar{height:7px;background:#0c0f14;border-radius:99px;overflow:hidden;margin-top:14px}
-.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--good),var(--accent));border-radius:99px;transition:width .4s}
-.bar i.over{background:linear-gradient(90deg,var(--warn),var(--bad))}
-
-.strip{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:12px;margin-bottom:10px;font-size:14px}
-.strip.warn{background:#3a2a12;border:1px solid #6b4a1c;color:#fcd9a0}
-.strip.info{background:#12283a;border:1px solid #1d4a6b;color:#a8d4f5}
-.strip .grow{flex:1}
-.strip button{font-weight:700;color:inherit;text-decoration:underline;white-space:nowrap}
-
-.chips{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.chip{background:var(--card2);border:1px solid var(--line);border-radius:13px;padding:11px 4px 9px;text-align:center;transition:.12s}
-.chip:active{transform:scale(.94);border-color:var(--accent)}
-.chip .ic{font-size:21px;display:block;line-height:1.1}
-.chip .tx{font-size:10.5px;color:var(--dim);display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-/* ---------- רשימת תנועות ---------- */
-.tx{display:flex;align-items:center;gap:11px;padding:11px 2px;border-bottom:1px solid var(--line)}
-.tx:last-child{border-bottom:0}
-.tx .ic{width:38px;height:38px;flex:0 0 38px;border-radius:11px;display:grid;place-items:center;font-size:18px;background:var(--card2)}
-.tx .mid{flex:1;min-width:0}
-.tx .nm{font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tx .mt{color:var(--dim);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-.tx .amt{font-weight:700;font-size:15px;white-space:nowrap}
-.tx .amt.in{color:var(--good)}
-.tx .amt.neutral{color:var(--dim)}
-.tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:6px;background:var(--card2);color:var(--dim);margin-inline-start:5px;vertical-align:1px}
-.tag.dup{background:#4a2a12;color:#fbbf7a}
-.tag.rev{background:#3a2f12;color:var(--accent)}
-
-/* ---------- פילוח ---------- */
-.row{display:flex;align-items:center;gap:10px;padding:8px 0}
-.row .nm{flex:1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .v{font-weight:700;font-size:14px;white-space:nowrap}
-.row .pc{color:var(--dim);font-size:11.5px;width:38px;text-align:left}
-.mbar{height:6px;background:#0c0f14;border-radius:99px;overflow:hidden;margin-top:5px}
-.mbar i{display:block;height:100%;border-radius:99px}
-.split{display:flex;gap:10px}
-.split>div{flex:1;background:var(--card2);border-radius:12px;padding:11px 12px}
-.split .k{color:var(--dim);font-size:11.5px}
-.split .v{font-size:19px;font-weight:700;margin-top:2px}
-
-.mnav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
-.mnav button{background:var(--card);border:1px solid var(--line);border-radius:11px;width:40px;height:40px;font-size:18px;color:var(--dim)}
-.mnav .lbl{font-weight:700;font-size:16px}
-
-/* ---------- ניווט תחתון ---------- */
-nav.bottom{
-  position:fixed;bottom:0;inset-inline:0;z-index:40;
-  background:rgba(13,15,19,.93);backdrop-filter:blur(14px);
-  border-top:1px solid var(--line);padding-bottom:var(--safe-b);
-}
-nav.bottom .in{max-width:560px;margin:0 auto;display:flex;align-items:center;justify-content:space-around;height:62px;position:relative}
-nav.bottom button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--dim2);font-size:10.5px;padding:6px 0}
-nav.bottom button .ic{font-size:20px;line-height:1}
-nav.bottom button.on{color:var(--accent)}
-.fab{
-  position:absolute;top:-24px;left:50%;transform:translateX(-50%);
-  width:58px;height:58px;border-radius:50%;background:linear-gradient(145deg,#f7d76a,#e0ac1f);
-  color:#1a1400;font-size:32px;font-weight:300;display:grid;place-items:center;
-  box-shadow:0 6px 22px rgba(242,201,76,.32);
-}
-.fab:active{transform:translateX(-50%) scale(.93)}
-nav.bottom .spacer{flex:1}
-
-/* ---------- מגירות ---------- */
-.sheet{position:fixed;inset:0;z-index:60;display:none}
-.sheet.on{display:block}
-.sheet .veil{position:absolute;inset:0;background:rgba(0,0,0,.62);animation:fade .15s}
-.sheet .panel{
-  position:absolute;inset-inline:0;bottom:0;max-height:92vh;overflow-y:auto;
-  background:var(--bg2);border-radius:22px 22px 0 0;border-top:1px solid var(--line);
-  padding:8px 16px calc(20px + var(--safe-b));max-width:560px;margin:0 auto;
-  animation:up .22s cubic-bezier(.2,.9,.3,1);
-}
-@keyframes up{from{transform:translateY(100%)}to{transform:none}}
-.grab{width:38px;height:4px;background:var(--line);border-radius:9px;margin:8px auto 14px}
-.sheet h2{margin:0 0 14px;font-size:17px;font-weight:700}
-
-/* ---------- מקלדת סכום ---------- */
-.amtline{text-align:center;margin:4px 0 14px}
-.amtline .v{font-size:46px;font-weight:800;letter-spacing:-1.5px;line-height:1}
-.amtline .v.zero{color:var(--dim2)}
-.amtline .cur{font-size:26px;opacity:.5}
-.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
-.pad button{background:var(--card);border:1px solid var(--line);border-radius:13px;height:56px;font-size:23px;font-weight:600}
-.pad button:active{background:var(--card2);border-color:var(--accent)}
-.pad button.act{font-size:19px;color:var(--dim)}
-
-.opts{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
-.opt{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 12px;font-size:13px;color:var(--dim)}
-.opt.on{background:#3a3212;border-color:var(--accent);color:var(--accent);font-weight:600}
-.fld{margin-bottom:11px}
-.fld label{display:block;font-size:12px;color:var(--dim);margin-bottom:5px}
-.two{display:flex;gap:9px}
-.two>*{flex:1}
-.btn{display:block;width:100%;background:var(--accent);color:#1a1400;font-weight:700;border-radius:13px;padding:15px;font-size:16px;text-align:center}
-.btn:active{opacity:.85}
-.btn.ghost{background:var(--card);color:var(--txt);border:1px solid var(--line)}
-.btn.danger{background:#4a1c1c;color:#fca5a5;border:1px solid #7f2323}
-.btn[disabled]{opacity:.45;pointer-events:none}
-
-/* ---------- בורר קטגוריה ---------- */
-.picker .dept{margin-bottom:14px}
-.picker .dept>.h{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;margin-bottom:7px}
-.picker .cats{display:flex;flex-wrap:wrap;gap:6px}
-.picker .cats button{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:12.5px;color:var(--dim)}
-.picker .cats button.on{background:#3a3212;border-color:var(--accent);color:var(--accent);font-weight:600}
-
-/* ---------- תוצאות פענוח ---------- */
-.pitem{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:11px 12px;margin-bottom:9px;transition:.15s}
-.pitem.off{opacity:.4}
-.pitem.dupw{border-color:#7a4a18}
-.pitem .hd{display:flex;align-items:center;gap:9px}
-.pitem .hd .ck{width:22px;height:22px;flex:0 0 22px;border-radius:7px;border:2px solid var(--line);display:grid;place-items:center;font-size:13px;color:#1a1400}
-.pitem.on .hd .ck{background:var(--accent);border-color:var(--accent)}
-.pitem .hd .nm{flex:1;font-weight:600;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pitem .hd .amt{font-weight:700;font-size:15px}
-.pitem .md{display:flex;align-items:center;gap:7px;margin-top:7px;padding-inline-start:31px;flex-wrap:wrap}
-.pitem .md .cat{font-size:11.5px;color:var(--accent);background:#2e2810;padding:3px 8px;border-radius:7px}
-.pitem .md .dt{font-size:11.5px;color:var(--dim)}
-.pitem .lowc{color:var(--warn)}
-.pitem .edit{margin-top:9px;padding-inline-start:31px;display:none}
-.pitem.exp .edit{display:block}
-
-.spin{width:20px;height:20px;border:2.5px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;display:inline-block;vertical-align:-4px}
-@keyframes sp{to{transform:rotate(360deg)}}
-.center{text-align:center;padding:34px 12px;color:var(--dim);font-size:14px}
-.err{background:#3a1616;border:1px solid #7f2323;color:#fca5a5;border-radius:11px;padding:11px 13px;font-size:13.5px;margin-bottom:11px}
-.ok{background:#14301f;border:1px solid #1f6b3f;color:#86efac;border-radius:11px;padding:11px 13px;font-size:13.5px;margin-bottom:11px}
-
-.toast{
-  position:fixed;bottom:calc(78px + var(--safe-b));left:50%;transform:translateX(-50%) translateY(20px);
-  background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:11px 18px;
-  font-size:14px;z-index:90;opacity:0;pointer-events:none;transition:.22s;box-shadow:var(--sh);white-space:nowrap;
-}
-.toast.on{opacity:1;transform:translateX(-50%)}
-
-.list-scroll{max-height:none}
-.srch{display:flex;gap:8px;margin-bottom:11px}
-.srch input{flex:1}
-.fbar{display:flex;gap:6px;overflow-x:auto;padding-bottom:9px;margin-bottom:5px;scrollbar-width:none}
-.fbar::-webkit-scrollbar{display:none}
-.fbar button{white-space:nowrap;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 11px;font-size:12.5px;color:var(--dim)}
-.fbar button.on{background:#3a3212;border-color:var(--accent);color:var(--accent);font-weight:600}
-.muted{color:var(--dim);font-size:13px}
-.hint{color:var(--dim2);font-size:11.5px;margin-top:5px;line-height:1.4}
-a{color:var(--info)}
-</style>
+<link rel="stylesheet" href="./style.css">
 </head>
 <body>
 
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></g>
+</defs>
+<symbol id="ic-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/></symbol>
+<symbol id="ic-food" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v8a2 2 0 0 0 4 0V3"/><path d="M8 11v10"/><path d="M17 3c-1.5 1.5-2 3.5-2 5.5S15.5 12 17 12.5V21"/></symbol>
+<symbol id="ic-car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v2.5M20 16v2.5"/><path d="M3 16v-4l2-5h14l2 5v4z"/><path d="M5.5 7h13"/><circle cx="7.5" cy="13.5" r="1"/><circle cx="16.5" cy="13.5" r="1"/></symbol>
+<symbol id="ic-health" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.5-7-9.5A4 4 0 0 1 12 8a4 4 0 0 1 7 2.5c0 5-7 9.5-7 9.5z"/></symbol>
+<symbol id="ic-family" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="2.6"/><circle cx="17" cy="9" r="2"/><path d="M3.5 19v-1.5A3.5 3.5 0 0 1 7 14h2a3.5 3.5 0 0 1 3.5 3.5V19"/><path d="M15 19v-1a2.7 2.7 0 0 1 2.7-2.7h.6A2.7 2.7 0 0 1 21 18v1"/></symbol>
+<symbol id="ic-bag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></symbol>
+<symbol id="ic-plane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12 3 18l4-6-4-6z"/><path d="M7 12h14"/></symbol>
+<symbol id="ic-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9a5 5 0 0 1 5-5h10"/><path d="m16 1 3 3-3 3"/><path d="M20 15a5 5 0 0 1-5 5H5"/><path d="m8 23-3-3 3-3"/></symbol>
+<symbol id="ic-bank" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M10 10v8M14 10v8M19 10v8"/><path d="M3 20h18"/></symbol>
+<symbol id="ic-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-5 3 3 5-7"/></symbol>
+<symbol id="ic-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13"/><path d="m14 5 3 3-3 3"/><path d="M20 16H7"/><path d="m10 13-3 3 3 3"/></symbol>
+<symbol id="ic-income" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10"/><path d="m8 10 4 4 4-4"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></symbol>
+<symbol id="ic-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="ic-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5h3.5L8 6h8l1.5 2.5H21v11H3z"/><circle cx="12" cy="14" r="3.2"/></symbol>
+<symbol id="ic-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.3a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-2.8-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.2a1.6 1.6 0 0 0 1.1-2.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 2.8 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7h.3a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.5 1z"/></symbol>
+<symbol id="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5.5 5.5L20 6"/></symbol>
+<symbol id="ic-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
+<symbol id="ic-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/></symbol>
+<symbol id="ic-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8 2 2-2 2 2 2-2 2-2-2-2 2z"/></symbol>
+<symbol id="ic-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M4 18v2h16v-2"/></symbol>
+<symbol id="ic-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6v.01M3.5 12v.01M3.5 18v.01"/></symbol>
+<symbol id="ic-bulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5.9 1.2.9 1.9v.2h5.2v-.2c0-.7.3-1.4.9-1.9A6 6 0 0 0 12 3z"/></symbol>
+<symbol id="ic-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+<symbol id="ic-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6.5 7 7.5 20h9l1-13"/></symbol>
+<symbol id="ic-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6 18 18M18 6 6 18"/></symbol>
+<symbol id="ic-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></symbol>
+<symbol id="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></symbol>
+</svg>
+
 <div id="app">
 
-  <!-- ============ בית ============ -->
-  <section class="view on" id="v-home">
-    <header class="top">
-      <div><h1>כסף</h1><div class="sub" id="home-date"></div></div>
-      <button id="btn-shot" style="background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 13px;font-size:13px;font-weight:600">📷 צילום</button>
+<!-- ==================== בית ==================== -->
+<section class="view on" id="v-home">
+  <header class="pagehead">
+    <div>
+      <h1>כסף</h1>
+      <div class="meta" id="home-date"></div>
+    </div>
+    <button id="go-settings" aria-label="הגדרות" style="color:var(--ink-3);padding:6px">
+      <svg width="20" height="20"><use href="#ic-gear"/></svg>
+    </button>
+  </header>
+
+  <div class="hero">
+    <div class="eyebrow" id="hero-eyebrow">נשאר להוציא היום</div>
+    <div class="fig" id="hero-fig">—</div>
+    <div class="meter" id="hero-meter" hidden><i></i></div>
+    <div class="note" id="hero-note"></div>
+  </div>
+
+  <div class="btnrow" style="margin-bottom:16px">
+    <button class="btn" id="act-add"><svg><use href="#ic-plus"/></svg>הוצאה</button>
+    <button class="btn accent" id="act-shot"><svg><use href="#ic-camera"/></svg>צילום מסך</button>
+  </div>
+
+  <div id="home-alerts"></div>
+
+  <div class="sec">
+    <header><h2>הוספה מהירה</h2></header>
+    <div class="quickgrid" id="quick"></div>
+  </div>
+
+  <div class="sec">
+    <header>
+      <h2>12 החודשים האחרונים</h2>
+      <div class="aside" id="trend-aside"></div>
     </header>
+    <div id="trend"></div>
+  </div>
 
-    <div id="home-strips"></div>
+  <div class="sec">
+    <header>
+      <h2>אחרונות</h2>
+      <button class="aside" id="see-all" style="text-decoration:underline">הכל</button>
+    </header>
+    <div id="recent"></div>
+  </div>
+</section>
 
-    <div class="hero">
-      <div class="lbl" id="hero-lbl">נשאר להוציא היום</div>
-      <div class="big num" id="hero-big">—</div>
-      <div class="bar"><i id="hero-bar" style="width:0%"></i></div>
-      <div class="foot" id="hero-foot"></div>
+<!-- ==================== ניתוח ==================== -->
+<section class="view" id="v-analysis">
+  <header class="pagehead">
+    <div>
+      <h1 id="an-title">ניתוח</h1>
+      <div class="meta" id="an-meta"></div>
     </div>
-
-    <div class="card tight">
-      <h3>הוספה מהירה</h3>
-      <div class="chips" id="quick-chips"></div>
+    <div style="display:flex;gap:4px">
+      <button id="an-prev" aria-label="חודש קודם" style="color:var(--ink-3);padding:8px"><svg width="18" height="18"><use href="#ic-chev"/></svg></button>
+      <button id="an-next" aria-label="חודש הבא" style="color:var(--ink-3);padding:8px;transform:rotate(180deg)"><svg width="18" height="18"><use href="#ic-chev"/></svg></button>
     </div>
+  </header>
 
-    <div class="card">
-      <h3>אחרונות</h3>
-      <div id="home-recent"></div>
-    </div>
-  </section>
+  <div class="tiles" id="an-tiles"></div>
 
-  <!-- ============ חודש ============ -->
-  <section class="view" id="v-month">
-    <header class="top"><div><h1>החודש</h1><div class="sub" id="month-sub"></div></div></header>
+  <div class="sec">
+    <header><h2>מהכנסה לנטו</h2><div class="aside">מפל החודש</div></header>
+    <div id="an-waterfall"></div>
+  </div>
 
-    <div class="mnav">
-      <button id="m-prev">›</button>
-      <div class="lbl" id="m-label"></div>
-      <button id="m-next">‹</button>
-    </div>
-
-    <div class="card">
-      <div class="split">
-        <div><div class="k">הוצאות</div><div class="v num" id="m-out">—</div></div>
-        <div><div class="k">הכנסות</div><div class="v num" id="m-in" style="color:var(--good)">—</div></div>
-        <div><div class="k">מאזן</div><div class="v num" id="m-net">—</div></div>
+  <div class="sec">
+    <header>
+      <h2>מקורות — הכנסה מול הוצאה</h2>
+      <div class="viewtoggle" data-toggle="streams">
+        <button data-mode="chart" class="on">גרף</button><button data-mode="table">טבלה</button>
       </div>
+    </header>
+    <div id="an-streams"></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--pos)"></i>נכנס</span>
+      <span><i class="swatch" style="background:var(--neg)"></i>יצא</span>
     </div>
+  </div>
 
-    <div class="card">
-      <h3>קבוע מול משתנה</h3>
-      <div id="m-kind"></div>
-    </div>
-
-    <div class="card">
-      <h3>חיוני מול רשות</h3>
-      <div id="m-need"></div>
-    </div>
-
-    <div class="card">
-      <h3>לפי מחלקה</h3>
-      <div id="m-depts"></div>
-    </div>
-
-    <div class="card">
-      <h3>בתי העסק הגדולים</h3>
-      <div id="m-merch"></div>
-    </div>
-
-    <div class="card">
-      <h3>התחייבויות עתידיות — תשלומים</h3>
-      <div id="m-inst"></div>
-    </div>
-  </section>
-
-  <!-- ============ הכל ============ -->
-  <section class="view" id="v-all">
-    <header class="top"><div><h1>הכל</h1><div class="sub" id="all-sub"></div></div></header>
-    <div class="srch">
-      <input id="q" placeholder="חיפוש בית עסק או הערה" autocomplete="off">
-    </div>
-    <div class="fbar" id="filters"></div>
-    <div class="card"><div id="all-list"></div></div>
-  </section>
-
-  <!-- ============ הגדרות ============ -->
-  <section class="view" id="v-set">
-    <header class="top"><div><h1>הגדרות</h1></div></header>
-
-    <div class="card">
-      <h3>מפתח Gemini</h3>
-      <div class="fld">
-        <input id="s-key" type="password" placeholder="AIza..." autocomplete="off">
-        <div class="hint">מפתח חינמי מ-<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. נשמר על המכשיר בלבד ולא נכלל בייצוא.</div>
+  <div class="sec">
+    <header>
+      <h2>לפי מחלקה</h2>
+      <div class="viewtoggle" data-toggle="depts">
+        <button data-mode="chart" class="on">גרף</button><button data-mode="table">טבלה</button>
       </div>
-      <div class="two">
-        <button class="btn ghost" id="s-test">בדיקת מפתח</button>
-        <button class="btn" id="s-savekey">שמירה</button>
-      </div>
-      <div id="s-keymsg" style="margin-top:11px"></div>
-      <div class="fld" id="s-modelwrap" style="margin-top:11px;display:none">
-        <label>מודל</label>
-        <select id="s-model"></select>
-      </div>
-    </div>
+    </header>
+    <div id="an-depts"></div>
+  </div>
 
-    <div class="card">
-      <h3>תקציב חודשי</h3>
-      <div class="fld">
-        <input id="s-budget" type="number" inputmode="decimal" placeholder="לדוגמה 12000">
-        <div class="hint">משמש למספר "נשאר להוציא היום". העברות והכנסות לא נספרות.</div>
-      </div>
-      <button class="btn" id="s-savebudget">שמירה</button>
-    </div>
+  <div class="sec">
+    <header><h2>הרכב לאורך זמן</h2><div class="aside">6 חודשים</div></header>
+    <div id="an-stack"></div>
+  </div>
 
-    <div class="card">
-      <h3>הוצאות קבועות</h3>
-      <div id="s-fixed"></div>
-      <button class="btn ghost" id="s-addfixed" style="margin-top:11px">+ הוספת הוצאה קבועה</button>
-      <div class="hint">נרשמות אוטומטית בתחילת כל חודש. זה מה שמפריד בין הקבוע למשתנה.</div>
+  <div class="grid2">
+    <div class="sec">
+      <header><h2>קבוע מול משתנה</h2></header>
+      <div id="an-kind"></div>
     </div>
-
-    <div class="card">
-      <h3>גיבוי החוצה</h3>
-      <div id="s-backupinfo" class="muted" style="margin-bottom:11px"></div>
-      <button class="btn" id="s-export">גיבוי עכשיו</button>
-      <div class="hint">בטלפון נפתח תפריט השיתוף — שמור לגוגל דרייב או שלח לעצמך. במחשב הקובץ פשוט יורד.</div>
-      <div class="two" style="margin-top:11px">
-        <button class="btn ghost" id="s-csv">ייצוא CSV</button>
-        <button class="btn ghost" id="s-import">ייבוא מקובץ</button>
-      </div>
+    <div class="sec">
+      <header><h2>חיוני מול רשות</h2></header>
+      <div id="an-need"></div>
     </div>
+  </div>
 
-    <div class="card">
-      <h3>גיבויים על המכשיר</h3>
-      <div id="s-snaps"></div>
-      <div class="hint">נשמרים אוטומטית פעם ביום ולפני כל פעולה מסוכנת. שומרים 12 אחרונים.
-        מגנים מפני מחיקה בטעות — <b>לא</b> מפני אובדן הטלפון. לזה יש את הגיבוי החוצה למעלה.</div>
+  <div class="sec">
+    <header><h2>מפת הוצאה יומית</h2><div class="aside" id="an-heat-aside"></div></header>
+    <div id="an-heat"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>בתי העסק הגדולים</h2></header>
+    <div class="scroll-x" id="an-merchants"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>התחייבויות בתשלומים</h2></header>
+    <div class="scroll-x" id="an-inst"></div>
+  </div>
+</section>
+
+<!-- ==================== התייעלות ==================== -->
+<section class="view" id="v-insights">
+  <header class="pagehead">
+    <div>
+      <h1>התייעלות</h1>
+      <div class="meta" id="in-meta"></div>
     </div>
+  </header>
+  <div class="hero" id="in-hero"></div>
+  <div id="in-findings"></div>
+  <div class="sec">
+    <header>
+      <h2>מצאי חיובים חוזרים</h2>
+      <div class="aside" id="in-rec-aside"></div>
+    </header>
+    <div class="scroll-x" id="in-recurring"></div>
+  </div>
+</section>
 
-    <div class="card">
-      <h3>מילון לומד</h3>
-      <div id="s-rules" class="muted"></div>
-      <button class="btn ghost" id="s-clearrules" style="margin-top:11px">איפוס המילון</button>
+<!-- ==================== תנועות ==================== -->
+<section class="view" id="v-ledger">
+  <header class="pagehead">
+    <div><h1>תנועות</h1><div class="meta" id="lg-meta"></div></div>
+  </header>
+  <div class="field">
+    <input class="inp" id="q" placeholder="חיפוש בית עסק, הערה או קטגוריה" autocomplete="off" type="search">
+  </div>
+  <div class="filterbar" id="lg-filters"></div>
+  <div id="lg-list"></div>
+</section>
+
+<!-- ==================== הגדרות ==================== -->
+<section class="view" id="v-settings">
+  <header class="pagehead"><div><h1>הגדרות</h1><div class="meta" id="st-meta"></div></div></header>
+
+  <div class="sec">
+    <header><h2>מפתח Gemini</h2></header>
+    <div class="field">
+      <input class="inp" id="st-key" type="password" placeholder="AIza…" autocomplete="off">
+      <div class="hint">מפתח חינמי מ-<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. נשמר על המכשיר בלבד ולא נכלל בגיבוי.</div>
     </div>
-
-    <div class="card">
-      <h3>אזור מסוכן</h3>
-      <button class="btn danger" id="s-wipe">מחיקת כל הנתונים</button>
+    <div class="btnrow">
+      <button class="btn ghost sm" id="st-test">בדיקה</button>
+      <button class="btn sm" id="st-savekey">שמירה</button>
     </div>
+    <div id="st-keymsg" style="margin-top:11px"></div>
+    <div class="field" id="st-modelwrap" style="margin-top:12px;display:none">
+      <label>מודל</label><select class="inp" id="st-model"></select>
+    </div>
+  </div>
 
-    <div class="center" style="padding:18px 0 0">כסף · v1 · <span id="s-count"></span></div>
-  </section>
+  <div class="sec">
+    <header><h2>תקציב חודשי</h2></header>
+    <div class="field">
+      <input class="inp" id="st-budget" type="number" inputmode="decimal" placeholder="12000">
+      <div class="hint">מזין את המספר "נשאר להוציא היום". העברות והכנסות לא נספרות בו.</div>
+    </div>
+    <button class="btn ghost sm" id="st-savebudget">שמירה</button>
+  </div>
+
+  <div class="sec">
+    <header><h2>מקורות — מרכזי רווח</h2></header>
+    <div id="st-streams"></div>
+    <button class="btn ghost sm" id="st-addstream" style="margin-top:11px">מקור חדש</button>
+    <div class="hint">כל תנועה משויכת למקור. כך אפשר לשאול "כמה המסחר באמת הכניס אחרי כל העלויות" — במקום לראות את ההוצאות וההכנסות בשני מקומות נפרדים.</div>
+  </div>
+
+  <div class="sec">
+    <header><h2>הוצאות קבועות</h2></header>
+    <div id="st-fixed"></div>
+    <button class="btn ghost sm" id="st-addfixed" style="margin-top:11px">הוצאה קבועה חדשה</button>
+    <div class="hint">נרשמות אוטומטית בתחילת כל חודש.</div>
+  </div>
+
+  <div class="sec">
+    <header><h2>גיבוי החוצה</h2></header>
+    <div class="hint" id="st-backupinfo" style="margin:0 0 11px"></div>
+    <button class="btn" id="st-export"><svg><use href="#ic-save"/></svg>גיבוי עכשיו</button>
+    <div class="hint">בטלפון נפתח תפריט השיתוף. במחשב הקובץ יורד.</div>
+    <div class="btnrow" style="margin-top:11px">
+      <button class="btn ghost sm" id="st-csv">CSV</button>
+      <button class="btn ghost sm" id="st-import">ייבוא</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <header><h2>גיבויים על המכשיר</h2></header>
+    <div id="st-snaps"></div>
+    <div class="hint">אוטומטי פעם ביום ולפני כל פעולה הרסנית. 12 אחרונים. מגן מטעות אנוש — לא מאובדן הטלפון.</div>
+  </div>
+
+  <div class="sec">
+    <header><h2>מילון לומד</h2></header>
+    <div class="hint" id="st-rules" style="margin:0"></div>
+    <button class="btn ghost sm" id="st-clearrules" style="margin-top:11px">איפוס</button>
+  </div>
+
+  <div class="sec">
+    <header><h2>תצוגה</h2></header>
+    <div class="chipset" id="st-theme"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>אזור מסוכן</h2></header>
+    <button class="btn danger" id="st-wipe"><svg><use href="#ic-trash"/></svg>מחיקת כל הנתונים</button>
+  </div>
+
+  <div class="empty" style="padding:22px 0 0" id="st-version"></div>
+</section>
 
 </div>
 
-<nav class="bottom">
+<nav class="tabbar">
   <div class="in">
-    <button data-go="home" class="on"><span class="ic">◎</span>בית</button>
-    <button data-go="month"><span class="ic">▤</span>חודש</button>
-    <div class="spacer"></div>
-    <button data-go="all"><span class="ic">≡</span>הכל</button>
-    <button data-go="set"><span class="ic">⚙</span>הגדרות</button>
-    <button class="fab" id="fab">+</button>
+    <button data-go="home" class="on"><svg><use href="#ic-home"/></svg>בית</button>
+    <button data-go="analysis"><svg><use href="#ic-chart"/></svg>ניתוח</button>
+    <button id="act-add-2" class="cta"><svg><use href="#ic-plus"/></svg>הוספה</button>
+    <button data-go="insights"><svg><use href="#ic-bulb"/></svg>התייעלות</button>
+    <button data-go="ledger"><svg><use href="#ic-list"/></svg>תנועות</button>
   </div>
 </nav>
 
-<!-- ============ מגירת הוספה מהירה ============ -->
-<div class="sheet" id="sh-add">
-  <div class="veil" data-close></div>
-  <div class="panel">
-    <div class="grab"></div>
-    <h2 id="add-title">הוצאה חדשה</h2>
-    <div class="amtline"><span class="v num zero" id="add-amt">0</span><span class="cur" id="add-cur"> ₪</span></div>
-    <div class="opts" id="add-quickcats"></div>
-    <div class="pad" id="add-pad"></div>
-    <div class="fld"><input id="add-merch" placeholder="על מה? (רשות)" autocomplete="off"></div>
-    <div class="opts" id="add-methods"></div>
-    <div class="two" style="margin-bottom:12px">
-      <div class="fld" style="margin:0"><label>תאריך</label><input id="add-date" type="date"></div>
-      <div class="fld" style="margin:0"><label>קטגוריה</label><button class="opt" id="add-catbtn" style="width:100%;padding:10px 12px;text-align:right">בחירה</button></div>
-    </div>
-    <div class="opts" id="add-flags"></div>
-    <button class="btn" id="add-save">שמירה</button>
+<!-- ==================== מגירות ==================== -->
+<div class="sheet" id="sh-add"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div>
+  <h2 class="title" id="add-title">הוצאה חדשה</h2>
+  <div class="amount"><span class="v zero" id="add-amt">0</span><span class="cur" id="add-cur"> ₪</span></div>
+  <div class="chipset" id="add-quick" style="margin-bottom:12px"></div>
+  <div class="keys" id="add-keys"></div>
+  <div class="field"><input class="inp" id="add-merch" placeholder="על מה / ממי? (רשות)" autocomplete="off"></div>
+  <div class="pair" style="margin-bottom:12px">
+    <div class="field" style="margin:0"><label>קטגוריה</label>
+      <button class="inp" id="add-cat" style="text-align:right">בחירה</button></div>
+    <div class="field" style="margin:0"><label>מקור</label>
+      <select class="inp" id="add-stream"></select></div>
   </div>
-</div>
+  <div class="pair" style="margin-bottom:12px">
+    <div class="field" style="margin:0"><label>תאריך</label><input class="inp" id="add-date" type="date"></div>
+    <div class="field" style="margin:0"><label>אמצעי</label><select class="inp" id="add-method"></select></div>
+  </div>
+  <div class="chipset" id="add-flags" style="margin-bottom:14px"></div>
+  <button class="btn accent" id="add-save">שמירה</button>
+</div></div>
 
-<!-- ============ מגירת בורר קטגוריה ============ -->
-<div class="sheet" id="sh-cat">
-  <div class="veil" data-close></div>
-  <div class="panel">
-    <div class="grab"></div>
-    <h2>בחירת קטגוריה</h2>
-    <div class="picker" id="cat-picker"></div>
-  </div>
-</div>
+<div class="sheet" id="sh-cat"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">בחירת קטגוריה</h2>
+  <div class="picker" id="cat-picker"></div>
+</div></div>
 
-<!-- ============ מגירת צילום מסך ============ -->
-<div class="sheet" id="sh-shot">
-  <div class="veil" data-close></div>
-  <div class="panel">
-    <div class="grab"></div>
-    <h2>צילום מסך</h2>
-    <div id="shot-body"></div>
-  </div>
-</div>
+<div class="sheet" id="sh-shot"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">צילום מסך</h2>
+  <div id="shot-body"></div>
+</div></div>
 
-<!-- ============ מגירת עריכת תנועה ============ -->
-<div class="sheet" id="sh-edit">
-  <div class="veil" data-close></div>
-  <div class="panel">
-    <div class="grab"></div>
-    <h2>עריכת תנועה</h2>
-    <div id="edit-body"></div>
-  </div>
-</div>
+<div class="sheet" id="sh-tx"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">תנועה</h2>
+  <div id="tx-body"></div>
+</div></div>
 
-<!-- ============ מגירת הוצאה קבועה ============ -->
-<div class="sheet" id="sh-fixed">
-  <div class="veil" data-close></div>
-  <div class="panel">
-    <div class="grab"></div>
-    <h2>הוצאה קבועה</h2>
-    <div id="fixed-body"></div>
-  </div>
-</div>
+<div class="sheet" id="sh-fixed"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">הוצאה קבועה</h2>
+  <div id="fixed-body"></div>
+</div></div>
+
+<div class="sheet" id="sh-stream"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">מקור</h2>
+  <div id="stream-body"></div>
+</div></div>
 
 <div class="toast" id="toast"></div>
 <input type="file" id="filein" accept="image/*" multiple hidden>

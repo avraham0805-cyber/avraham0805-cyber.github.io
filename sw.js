@@ -1,8 +1,9 @@
 // Service Worker — עבודה אופליין + קליטת צילומי מסך משותפים מהטלפון.
 
-const CACHE = 'kesef-v1';
+const CACHE = 'kesef-v2';
 const SHELL = [
-  './', './index.html', './app.js', './db.js', './ai.js', './taxonomy.js',
+  './', './index.html', './style.css', './app.js', './db.js', './ai.js',
+  './taxonomy.js', './charts.js', './insights.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
 ];
 
@@ -26,10 +27,10 @@ self.addEventListener('activate', (e) => {
 
 function idb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('kesef', 2);
+    const req = indexedDB.open('kesef', 3);
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const s of ['tx', 'rules', 'fixed', 'meta', 'pending', 'snapshots']) {
+      for (const s of ['tx', 'rules', 'fixed', 'meta', 'pending', 'snapshots', 'streams']) {
         if (!db.objectStoreNames.contains(s)) {
           db.createObjectStore(s, { keyPath: s === 'meta' ? 'k' : (s === 'rules' ? 'key' : 'id') });
         }

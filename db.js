@@ -2,7 +2,7 @@
 // סכומים נשמרים כאגורות (מספר שלם) כדי למנוע שגיאות עיגול.
 
 const DB_NAME = 'kesef';
-const DB_VER = 2;
+const DB_VER = 3;
 
 /** @type {IDBDatabase|null} */
 let _db = null;
@@ -37,6 +37,10 @@ export function open() {
       if (!db.objectStoreNames.contains('snapshots')) {
         // גיבויים מקומיים מתגלגלים — הגנה מפני מחיקה בטעות או קלקול
         db.createObjectStore('snapshots', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('streams')) {
+        // מרכזי רווח — כאן נפגשות הכנסות והוצאות של אותה פעילות
+        db.createObjectStore('streams', { keyPath: 'id' });
       }
       void e;
     };
@@ -193,17 +197,18 @@ export function findDuplicate(rec, existing) {
 /* ---------- ייצוא / ייבוא ---------- */
 
 export async function exportAll() {
-  const [txs, rules, fixed, meta] = await Promise.all([
-    all('tx'), all('rules'), all('fixed'), all('meta'),
+  const [txs, rules, fixed, meta, streams] = await Promise.all([
+    all('tx'), all('rules'), all('fixed'), all('meta'), all('streams'),
   ]);
   return {
     app: 'kesef',
-    version: 1,
+    version: 3,
     exportedAt: new Date().toISOString(),
-    counts: { tx: txs.length, rules: rules.length, fixed: fixed.length },
+    counts: { tx: txs.length, rules: rules.length, fixed: fixed.length, streams: streams.length },
     tx: txs,
     rules,
     fixed,
+    streams,
     meta: meta.filter(m => m.k !== 'geminiKey'), // המפתח לא יוצא מהמכשיר
   };
 }
@@ -247,10 +252,11 @@ export async function restoreSnapshot(id) {
 
 export async function importAll(data, { merge = true } = {}) {
   if (!data || data.app !== 'kesef') throw new Error('קובץ לא מזוהה');
-  if (!merge) { await clear('tx'); await clear('rules'); await clear('fixed'); }
-  const stats = { tx: 0, rules: 0, fixed: 0 };
-  if (Array.isArray(data.tx))    { await putMany('tx', data.tx);       stats.tx = data.tx.length; }
-  if (Array.isArray(data.rules)) { await putMany('rules', data.rules); stats.rules = data.rules.length; }
-  if (Array.isArray(data.fixed)) { await putMany('fixed', data.fixed); stats.fixed = data.fixed.length; }
+  if (!merge) { await clear('tx'); await clear('rules'); await clear('fixed'); await clear('streams'); }
+  const stats = { tx: 0, rules: 0, fixed: 0, streams: 0 };
+  if (Array.isArray(data.tx))      { await putMany('tx', data.tx);           stats.tx = data.tx.length; }
+  if (Array.isArray(data.rules))   { await putMany('rules', data.rules);     stats.rules = data.rules.length; }
+  if (Array.isArray(data.fixed))   { await putMany('fixed', data.fixed);     stats.fixed = data.fixed.length; }
+  if (Array.isArray(data.streams)) { await putMany('streams', data.streams); stats.streams = data.streams.length; }
   return stats;
 }
