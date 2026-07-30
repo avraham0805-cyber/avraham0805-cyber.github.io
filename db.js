@@ -1,6 +1,8 @@
 // שכבת אחסון — IndexedDB. הכל נשאר על המכשיר.
 // סכומים נשמרים כאגורות (מספר שלם) כדי למנוע שגיאות עיגול.
 
+import * as Crypto from './crypto.js';
+
 const DB_NAME = 'kesef';
 const DB_VER = 3;
 
@@ -107,6 +109,41 @@ export async function setSetting(k, v) {
   return put('meta', { k, v });
 }
 
+/* ---------- סודות מוצפנים ---------- */
+// מפתחות API אף פעם לא יושבים בטקסט גלוי. גם מי שמושך את בסיס הנתונים
+// מהמכשיר מקבל רק ciphertext, וחומר המפתח עצמו אינו ניתן לחילוץ.
+
+const SECRET_KEYS = new Set(['geminiKey']);
+/** מפתחות שלעולם אינם יוצאים בגיבוי */
+const NEVER_EXPORT = new Set(['geminiKey', 'dek', 'dekWrapped']);
+
+export async function setSecret(k, plain) {
+  if (!SECRET_KEYS.has(k)) throw new Error('מפתח לא מוכר: ' + k);
+  if (!plain) return del('meta', k);
+  const box = await Crypto.seal(plain);
+  return put('meta', { k, v: box, sealed: true });
+}
+
+export async function getSecret(k) {
+  const row = await get('meta', k);
+  if (!row) return null;
+  if (!row.sealed) return row.v;               // נתון ישן מלפני ההצפנה
+  try { return await Crypto.open(row.v); }
+  catch { return null; }
+}
+
+export async function hasSecret(k) {
+  return !!(await get('meta', k));
+}
+
+/** מעלה סודות שנשמרו בטקסט גלוי לפני שההצפנה קיימה */
+export async function migrateSecrets() {
+  for (const k of SECRET_KEYS) {
+    const row = await get('meta', k);
+    if (row && !row.sealed && row.v) await setSecret(k, row.v);
+  }
+}
+
 /* ---------- עסקאות ---------- */
 
 export function uid() {
@@ -117,13 +154,26 @@ export function uid() {
 
 export const monthOf = (isoDate) => (isoDate || '').slice(0, 7);
 
-/** נרמול שם בית עסק לצורך המילון הלומד והשוואת כפילויות */
+/**
+ * נרמול שם בית עסק — הבסיס גם למילון הלומד וגם לזיהוי כפילויות.
+ *
+ * הסדר כאן קריטי: צורות התאגדות חייבות לרדת **לפני** ניקוי הפיסוק,
+ * אחרת בע״מ הופך ל"בע מ" ושום דפוס כבר לא תופס אותו — ואז אותו עסק
+ * נרשם פעמיים ומפספסים גם את הכלל שנלמד עליו וגם את הכפילות.
+ * \b של JS נשען על ASCII ולכן חסר תועלת בעברית; משתמשים בסיומות מפורשות.
+ */
+const ORG_FORMS = [
+  /בע\s*[״"'׳`]?\s*מ/g,        // בע"מ · בע״מ · בעמ · בע מ
+  /\(?\s*ע\s*[״"'׳`]?\s*ר\s*\)?/g, // ע"ר
+  /\b(?:ltd|limited|inc|incorporated|llc|plc|gmbh|s\.?a\.?r\.?l)\b\.?/gi,
+];
+
 export function normMerchant(name) {
-  return (name || '')
-    .replace(/[֑-ׇ]/g, '')          // ניקוד
-    .replace(/["'`׳״.,\-_/\\|()[\]]/g, ' ')   // פיסוק
-    .replace(/\b(בעמ|בע״מ|בע"מ|ltd|inc|llc)\b/gi, ' ')
-    .replace(/\d{3,}/g, ' ')                  // מספרי סניף/אסמכתא
+  let s = (name || '').replace(/[֑-ׇ]/g, '');   // ניקוד וטעמים
+  for (const re of ORG_FORMS) s = s.replace(re, ' ');
+  return s
+    .replace(/["'`׳״.,\-_/\\|()[\]{}*+]/g, ' ')            // פיסוק
+    .replace(/\d{3,}/g, ' ')                               // מספרי סניף ואסמכתא
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
@@ -209,7 +259,8 @@ export async function exportAll() {
     rules,
     fixed,
     streams,
-    meta: meta.filter(m => m.k !== 'geminiKey'), // המפתח לא יוצא מהמכשיר
+    // מפתחות API וחומר הצפנה לעולם לא עוזבים את המכשיר
+    meta: meta.filter(m => !NEVER_EXPORT.has(m.k)),
   };
 }
 
@@ -250,13 +301,97 @@ export async function restoreSnapshot(id) {
   return importAll(rec.data, { merge: false });
 }
 
+/* ---------- ייבוא מאומת ---------- */
+// קובץ גיבוי הוא קלט לא-מהימן: הוא יכול להגיע מוואטסאפ, ממייל, או מקובץ
+// שמישהו ערך. לכן כל רשומה נבנית מחדש משדות מותרים בלבד — לא מועתקת כמו שהיא.
+
+const MAX_ROWS = 100000;
+const STR = (v, max = 120) => (typeof v === 'string' ? v.slice(0, max) : '');
+const NUM = (v, max = 1e12) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(-max, Math.min(max, Math.round(n))) : 0;
+};
+const ONE_OF = (v, set, dflt) => (set.includes(v) ? v : dflt);
+const ISO_DATE = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) ? v : null);
+
+function cleanTx(r) {
+  if (!r || typeof r !== 'object') return null;
+  const dateBuy = ISO_DATE(r.dateBuy);
+  if (!dateBuy) return null;
+  const inst = r.installment && Number.isInteger(r.installment.n) && Number.isInteger(r.installment.of)
+    && r.installment.of > 1 && r.installment.n <= r.installment.of && r.installment.of <= 240
+    ? { n: r.installment.n, of: r.installment.of } : null;
+  return {
+    id: STR(r.id, 64) || uid(),
+    ts: NUM(r.ts) || Date.now(),
+    dateBuy, dateCharge: ISO_DATE(r.dateCharge),
+    merchant: STR(r.merchant, 80),
+    amount: NUM(r.amount), ils: NUM(r.ils ?? r.amount),
+    currency: ONE_OF(r.currency, ['ILS', 'USD', 'EUR', 'GBP', 'OTHER'], 'ILS'),
+    dept: STR(r.dept, 24), cat: STR(r.cat, 24),
+    kind: ONE_OF(r.kind, ['fixed', 'variable', 'oneoff'], 'variable'),
+    need: ONE_OF(r.need, ['essential', 'discretionary'], 'essential'),
+    scope: ONE_OF(r.scope, ['personal', 'business'], 'personal'),
+    stream: STR(r.stream, 64) || 'household',
+    method: ONE_OF(r.method, ['cash', 'credit', 'bank', 'bit', 'other'], 'cash'),
+    installment: inst,
+    note: STR(r.note, 200), source: ONE_OF(r.source, ['manual', 'ocr', 'recurring'], 'manual'),
+    confidence: Math.max(0, Math.min(1, Number(r.confidence) || 1)),
+    needsReview: r.needsReview === true,
+    dupOf: STR(r.dupOf, 64) || null,
+    raw: STR(r.raw, 200),
+    fixedId: STR(r.fixedId, 64) || null,
+    month: dateBuy.slice(0, 7),
+  };
+}
+
+const cleanRule = (r) => (r && typeof r.key === 'string' && r.key ? {
+  key: STR(r.key, 120), merchant: STR(r.merchant, 80),
+  dept: STR(r.dept, 24), cat: STR(r.cat, 24),
+  kind: STR(r.kind, 16), need: STR(r.need, 16), scope: STR(r.scope, 16), stream: STR(r.stream, 64),
+  hits: NUM(r.hits, 1e6), updated: NUM(r.updated),
+} : null);
+
+const cleanFixed = (f) => (f && typeof f === 'object' && f.id ? {
+  id: STR(f.id, 64), merchant: STR(f.merchant, 80), amount: NUM(f.amount),
+  dept: STR(f.dept, 24), cat: STR(f.cat, 24), stream: STR(f.stream, 64) || 'household',
+  day: Math.max(1, Math.min(31, NUM(f.day) || 1)),
+  method: ONE_OF(f.method, ['cash', 'credit', 'bank', 'bit', 'other'], 'bank'),
+  need: ONE_OF(f.need, ['essential', 'discretionary'], 'essential'),
+  active: f.active !== false, startMonth: STR(f.startMonth, 7),
+} : null);
+
+const cleanStream = (s) => (s && typeof s === 'object' && s.id ? {
+  id: STR(s.id, 64), name: STR(s.name, 60) || 'ללא שם',
+  kind: ONE_OF(s.kind, ['household', 'employment', 'venture', 'property', 'other'], 'other'),
+  slot: Math.max(0, Math.min(7, NUM(s.slot))), active: s.active !== false,
+  builtin: s.builtin === true,
+} : null);
+
+const cleanMeta = (m) => (m && typeof m.k === 'string' && !NEVER_EXPORT.has(m.k)
+  ? { k: STR(m.k, 60), v: m.v } : null);
+
 export async function importAll(data, { merge = true } = {}) {
   if (!data || data.app !== 'kesef') throw new Error('קובץ לא מזוהה');
+  if (data.encrypted) throw new Error('הקובץ מוצפן — נדרשת סיסמה');
+
+  const take = (arr, fn) =>
+    (Array.isArray(arr) ? arr.slice(0, MAX_ROWS).map(fn).filter(Boolean) : []);
+
+  const tx = take(data.tx, cleanTx);
+  const rules = take(data.rules, cleanRule);
+  const fixed = take(data.fixed, cleanFixed);
+  const streams = take(data.streams, cleanStream);
+  const meta = take(data.meta, cleanMeta);
+
+  const dropped = (Array.isArray(data.tx) ? data.tx.length : 0) - tx.length;
+
   if (!merge) { await clear('tx'); await clear('rules'); await clear('fixed'); await clear('streams'); }
-  const stats = { tx: 0, rules: 0, fixed: 0, streams: 0 };
-  if (Array.isArray(data.tx))      { await putMany('tx', data.tx);           stats.tx = data.tx.length; }
-  if (Array.isArray(data.rules))   { await putMany('rules', data.rules);     stats.rules = data.rules.length; }
-  if (Array.isArray(data.fixed))   { await putMany('fixed', data.fixed);     stats.fixed = data.fixed.length; }
-  if (Array.isArray(data.streams)) { await putMany('streams', data.streams); stats.streams = data.streams.length; }
-  return stats;
+  if (tx.length) await putMany('tx', tx);
+  if (rules.length) await putMany('rules', rules);
+  if (fixed.length) await putMany('fixed', fixed);
+  if (streams.length) await putMany('streams', streams);
+  for (const m of meta) await put('meta', m);
+
+  return { tx: tx.length, rules: rules.length, fixed: fixed.length, streams: streams.length, dropped };
 }

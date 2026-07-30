@@ -2,6 +2,8 @@ import * as DB from './db.js';
 import * as AI from './ai.js';
 import * as C from './charts.js';
 import * as IN from './insights.js';
+import * as ST from './stats.js';
+import * as Crypto from './crypto.js';
 import {
   DEPTS, EXPENSE_DEPTS, QUICK_SEED, DEFAULT_STREAMS, STREAM_KIND_LABEL,
   dept, cat, pathLabel, catLabel, flowOf, defaultsFor, guessStream,
@@ -84,15 +86,23 @@ const streamColor = (id) => {
 
 async function init() {
   await DB.open();
+
+  // שכבת ההצפנה קודמת לכל דבר אחר — בלעדיה אין גישה לסודות
+  const state = await Crypto.initCrypto(DB);
+  if (state === 'needs-pin') { showLock(); return; }
+  await DB.migrateSecrets();
+
   await ensureStreams();
   await reload();
 
   S.budget = await DB.setting('budget', 0);
   S.fx = await DB.setting('fx', S.fx);
   S.lastExport = await DB.setting('lastExport', 0);
-  S.hasKey = !!(await DB.setting('geminiKey'));
+  S.hasKey = await DB.hasSecret('geminiKey');
+  S.autoLock = await DB.setting('autoLockMin', 0);
   const theme = await DB.setting('theme', 'auto');
   applyTheme(theme);
+  armAutoLock();
 
   await applyFixedForMonth(curMonth());
   await backfillStreams();
@@ -139,6 +149,45 @@ function applyTheme(mode) {
   if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', mode);
   S.theme = mode;
+}
+
+/* ==================== נעילה ==================== */
+
+let lockTimer = null;
+
+function armAutoLock() {
+  clearTimeout(lockTimer);
+  if (!S.autoLock) return;
+  const reset = () => {
+    clearTimeout(lockTimer);
+    lockTimer = setTimeout(() => { Crypto.lockNow(); location.reload(); }, S.autoLock * 60000);
+  };
+  ['pointerdown', 'keydown', 'visibilitychange'].forEach(ev =>
+    document.addEventListener(ev, reset, { passive: true }));
+  reset();
+}
+
+function showLock(err = '') {
+  $('#lock-body').innerHTML = `
+    <div class="empty" style="padding:10px 0 22px">${icon('lock', 30)}
+      <div style="margin-top:12px">הנתונים מוצפנים. הקלד את קוד הנעילה כדי לפתוח.</div></div>
+    ${err ? `<div class="note bad">${icon('alert')}<span>${esc(err)}</span></div>` : ''}
+    <div class="field"><input class="inp" id="lock-pin" type="password" inputmode="numeric"
+      autocomplete="off" placeholder="קוד" style="text-align:center;font-size:22px;letter-spacing:.3em"></div>
+    <button class="btn accent" id="lock-go">פתיחה</button>
+    <div class="hint">אין דרך לעקוף את הקוד. הוא לא נשמר בשום מקום — הוא מה שגוזר את מפתח ההצפנה.</div>`;
+  openSheet('sh-lock');
+  setTimeout(() => $('#lock-pin')?.focus(), 120);
+  const go = async () => {
+    const pin = $('#lock-pin').value.trim();
+    try {
+      await Crypto.unlock(DB, pin);
+      closeSheet('sh-lock');
+      location.reload();
+    } catch (e) { showLock(e.message); }
+  };
+  $('#lock-go').onclick = go;
+  $('#lock-pin').onkeydown = (e) => { if (e.key === 'Enter') go(); };
 }
 
 /* ==================== הוצאות קבועות ==================== */
@@ -278,7 +327,242 @@ function render() {
   $('#v-' + S.view).classList.add('on');
   $$('nav.tabbar button[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === S.view));
   C.hideTip();
-  ({ home: renderHome, analysis: renderAnalysis, insights: renderInsights, ledger: renderLedger, settings: renderSettings })[S.view]();
+  ({
+    home: renderHome, analysis: renderAnalysis, forecast: renderForecast,
+    insights: renderInsights, ledger: renderLedger, settings: renderSettings,
+  })[S.view]();
+}
+
+/* ==================== רכיבי סטטיסטיקה ==================== */
+
+/** צ'יפ דלתא — הכיוון והגודל במבט אחד, עם מילה ולא רק צבע */
+function delta(value, { invert = true, suffix = '' } = {}) {
+  if (value === null || value === undefined || !isFinite(value)) return '';
+  const up = value > 0;
+  const bad = invert ? up : !up;
+  const color = Math.abs(value) < 0.005 ? 'var(--ink-3)' : bad ? 'var(--neg)' : 'var(--delta-up)';
+  const arrow = Math.abs(value) < 0.005 ? '' : up ? '▲' : '▼';
+  return `<span class="num" style="color:${color};font-size:12px;font-weight:620">${arrow} ${Math.abs(Math.round(value * 100))}%${suffix}</span>`;
+}
+
+function renderAttribution() {
+  const prev = shiftMonth(S.month, -1);
+  const a = ST.attribution(S.txs, prev, S.month);
+  const host = $('#an-attribution');
+  if (!a.totalA && !a.totalB) { host.innerHTML = '<div class="empty">אין מספיק היסטוריה להשוואה</div>'; return; }
+  if (!a.parts.length) { host.innerHTML = '<div class="empty">אין שינוי בין החודשים</div>'; return; }
+
+  $('#an-attr-aside').innerHTML =
+    `${monthShort(prev)} ← ${monthShort(S.month)} · ${delta(a.pct)}`;
+
+  const top = a.parts.slice(0, 8);
+  const maxAbs = Math.max(...top.map(p => Math.abs(p.delta)), 1);
+  const headline = a.delta === 0 ? 'ללא שינוי'
+    : `${a.delta > 0 ? 'עלייה' : 'ירידה'} של ${money(Math.abs(a.delta))}`;
+  const driver = top[0];
+
+  // כשמחלקות מקזזות זו את זו, תרומה בודדת יכולה לעלות על השינוי הנקי.
+  // "160% מהשינוי" קורא כמו באג — במקרה כזה מסבירים את הקיזוז במקום אחוז.
+  const share = pct(Math.abs(driver?.delta || 0), Math.abs(a.delta) || 1);
+  const offset = a.up.length && a.down.length;
+  const why = !driver ? ''
+    : share <= 100 && !offset
+      ? `הגורם הגדול ביותר: <b>${esc(driver.label)}</b>, ${driver.delta > 0 ? 'עלה' : 'ירד'}
+         ב-${money(Math.abs(driver.delta))} — ${share}% מכל השינוי.`
+      : `<b>${esc(driver.label)}</b> ${driver.delta > 0 ? 'עלה' : 'ירד'} ב-${money(Math.abs(driver.delta))},
+         אבל ${a.up.length && a.down.length ? 'מחלקות אחרות קיזזו חלק מהתנועה' : 'התנועה התפזרה'} —
+         לכן השינוי הנקי הוא ${money(Math.abs(a.delta))} בלבד.`;
+
+  host.innerHTML = `
+    <div class="panel" style="margin-bottom:12px">
+      <div style="font-size:15px;font-weight:600;margin-bottom:4px">${headline}</div>
+      <div class="hint" style="margin:0">${why}</div>
+      ${offset ? `<div class="hint" style="margin-top:8px">
+        ${a.up.length} מחלקות גדלו בסך ${money(a.up.reduce((s, p) => s + p.delta, 0))} ·
+        ${a.down.length} קטנו בסך ${money(Math.abs(a.down.reduce((s, p) => s + p.delta, 0)))}
+      </div>` : ''}
+    </div>
+    ${top.map(p => {
+      const w = Math.abs(p.delta) / maxAbs * 100;
+      const isUp = p.delta > 0;
+      return `<div class="row" style="cursor:pointer;align-items:flex-start" data-deptrow="${esc(p.dept)}">
+        <span style="flex:1;min-width:0">
+          <span style="display:flex;align-items:baseline;gap:9px">
+            <span style="flex:1;font-size:13.5px;font-weight:550">${esc(p.label)}</span>
+            <span class="num" style="font-size:11.5px;color:var(--ink-3)">${money0(p.from)} ← ${money0(p.to)}</span>
+            <span class="num" style="font-size:13.5px;font-weight:620;color:${isUp ? 'var(--neg)' : 'var(--delta-up)'}">${isUp ? '+' : '−'}${money0(Math.abs(p.delta))}</span>
+          </span>
+          <span class="cellbar" style="display:flex;justify-content:${isUp ? 'flex-start' : 'flex-end'}">
+            <i style="width:${w}%;background:${isUp ? 'var(--neg)' : 'var(--delta-up)'}"></i>
+          </span>
+        </span>
+      </div>`;
+    }).join('')}
+    <div class="legend"><span><i class="swatch" style="background:var(--neg)"></i>גדל</span>
+      <span><i class="swatch" style="background:var(--delta-up)"></i>קטן</span></div>`;
+}
+
+function renderPace() {
+  const r = ST.runRate(S.txs, S.month);
+  const host = $('#an-pace');
+  if (!r.total) { host.innerHTML = '<div class="empty">אין תנועות בחודש זה</div>'; return; }
+  const base = ST.baseline(S.txs, S.month);
+  const vsBase = base.median ? (r.projected - base.median) / base.median : null;
+
+  $('#an-pace-aside').innerHTML = r.isCurrent
+    ? `יום ${r.dayOfMonth} מתוך ${r.daysInMonth}`
+    : 'החודש הסתיים';
+
+  const rows = [
+    ['הוצאה עד כה', money(r.total)],
+    ['קצב יומי', money(r.perDay)],
+    [r.isCurrent ? 'תחזית לסוף החודש' : 'סה״כ בפועל', `<b>${money(r.projected)}</b>`],
+    ['חציון 3 חודשים אחרונים', base.median ? money(base.median) : '—'],
+  ];
+  if (S.budget) rows.push(['תקציב', money(S.budget)]);
+
+  const verdict = !S.budget ? null
+    : r.projected > S.budget * 1.05 ? { t: 'חריגה צפויה', c: 'var(--neg)', d: `בקצב הזה תסיים ${money(r.projected - S.budget)} מעל התקציב` }
+    : r.projected < S.budget * 0.9 ? { t: 'מתחת לתקציב', c: 'var(--delta-up)', d: `בקצב הזה תסיים ${money(S.budget - r.projected)} מתחת לתקציב` }
+    : { t: 'בקצב', c: 'var(--ink-2)', d: 'התחזית קרובה לתקציב' };
+
+  host.innerHTML = `
+    ${verdict ? `<div class="panel" style="margin-bottom:12px">
+      <div style="font-size:15px;font-weight:620;color:${verdict.c}">${verdict.t}</div>
+      <div class="hint" style="margin-top:3px">${verdict.d}</div>
+      <div class="meter" style="margin-top:12px">
+        <i style="width:${Math.min(100, pct(r.total, S.budget))}%"></i>
+        ${r.projected > S.budget ? '' : `<i style="width:${Math.min(100 - pct(r.total, S.budget), Math.max(0, pct(r.projected - r.total, S.budget)))}%;background:var(--rule-2)"></i>`}
+      </div>
+      <div class="hint" style="display:flex;justify-content:space-between;margin-top:6px">
+        <span>בפועל ${money0(r.total)}</span><span>תחזית ${money0(r.projected)}</span></div>
+    </div>` : ''}
+    ${table([{ label: 'מדד' }, { label: 'ערך', n: true }],
+      rows.map(([k, v]) => ({ cells: [k, `<span class="num">${v}</span>`] })))}
+    ${vsBase !== null ? `<div class="hint">התחזית ${vsBase > 0 ? 'גבוהה' : 'נמוכה'} ב-${Math.abs(Math.round(vsBase * 100))}% מהחציון של שלושת החודשים הקודמים.</div>` : ''}`;
+}
+
+function renderVolatility() {
+  const v = ST.volatility(S.txs).slice(0, 12);
+  const host = $('#an-volatility');
+  if (!v.length) { host.innerHTML = '<div class="empty">צריך שלושה חודשי היסטוריה לפחות</div>'; return; }
+  const band = (cv) => cv < 0.25 ? { t: 'יציב', c: 'var(--good)' }
+    : cv < 0.6 ? { t: 'בינוני', c: 'var(--warn)' }
+    : { t: 'תנודתי', c: 'var(--serious)' };
+  host.innerHTML = table(
+    [{ label: 'קטגוריה' }, { label: 'ממוצע חודשי', n: true }, { label: 'סטייה', n: true }, { label: 'יציבות' }, { label: 'מגמה' }],
+    v.map(r => {
+      const b = band(r.cv);
+      return {
+        cells: [
+          esc(r.label),
+          `<span class="num">${money(r.mean)}</span>`,
+          `<span class="num">${money(r.sd)}</span>`,
+          `<span style="color:${b.c};font-weight:600;font-size:12px">${b.t}</span>
+           <span class="num" style="color:var(--ink-3);font-size:11px"> ${r.cv.toFixed(2)}</span>`,
+          sparkCell(r.series),
+        ],
+      };
+    }),
+  );
+}
+
+function renderConcentration() {
+  const c = ST.concentration(S.txs, S.month);
+  const host = $('#an-concentration');
+  if (!c) { host.innerHTML = '<div class="empty">אין נתונים</div>'; return; }
+  const level = c.top5Share > 0.7 ? 'מרוכזת מאוד' : c.top5Share > 0.45 ? 'מרוכזת' : 'מפוזרת';
+  host.innerHTML = `
+    <div class="hero" style="padding:0 0 14px">
+      <div class="eyebrow">חמשת הגדולים</div>
+      <div class="fig" style="font-size:38px">${Math.round(c.top5Share * 100)}<span class="cur">%</span></div>
+      <div class="note">מההוצאה החודשית מרוכזת ב-5 בתי עסק מתוך ${c.merchants}. התמונה ${level}.</div>
+    </div>
+    ${table([{ label: 'בית עסק' }, { label: 'חלק', n: true }],
+      c.top5.map(([n, v]) => ({ cells: [esc(n), `<span class="num">${pct(v, c.total)}%</span>`] })))}`;
+}
+
+function renderWeekday() {
+  const w = ST.weekdayPattern(S.txs.filter(t => t.month === S.month));
+  const host = $('#an-weekday');
+  const max = Math.max(...w.map(d => d.perActiveDay), 1);
+  if (!w.some(d => d.total)) { host.innerHTML = '<div class="empty">אין נתונים</div>'; return; }
+  const peak = [...w].sort((a, b) => b.perActiveDay - a.perActiveDay)[0];
+  host.innerHTML =
+    w.map(d => `<div class="row" style="cursor:default;align-items:flex-start">
+      <span style="flex:1">
+        <span style="display:flex;align-items:baseline;gap:9px">
+          <span style="flex:1;font-size:13px">${d.label}</span>
+          <span class="num" style="font-size:11.5px;color:var(--ink-3)">${d.count} תנועות</span>
+          <span class="num" style="font-size:13px;font-weight:600">${money0(d.perActiveDay)}</span>
+        </span>
+        <span class="cellbar"><i style="width:${d.perActiveDay / max * 100}%;background:${d === peak ? 'var(--s1)' : 'var(--rule-2)'}"></i></span>
+      </span>
+    </div>`).join('') +
+    `<div class="hint">ממוצע ליום פעיל, לא סכום — כך חודש עם חמש שבתות לא נראה כמו הרגל.
+      היום הכבד ביותר: <b>${peak.label}</b>.</div>`;
+}
+
+function renderCumulative() {
+  const c = ST.cumulativeNet(S.txs);
+  const host = $('#an-cumulative');
+  if (c.length < 2) { host.replaceChildren(emptyEl()); return; }
+  const box = document.createElement('div');
+  box.appendChild(C.columns(
+    c.slice(-12).map(r => ({
+      label: monthShort(r.month), value: Math.max(0, r.cumulative),
+      sub: `נטו החודש ${money0(r.net)}`, current: r.month === S.month,
+    })),
+    { fmt: money0 },
+  ));
+  const last = c.at(-1);
+  const note = document.createElement('div');
+  note.className = 'hint';
+  note.innerHTML = `מאז ${monthLabel(c[0].month)} נשמרו <b>${money(last.cumulative)}</b> נטו.
+    ${last.cumulative < 0 ? 'המספר שלילי — יצא יותר ממה שנכנס בסך התקופה.' : ''}`;
+  box.appendChild(note);
+  host.replaceChildren(box);
+}
+
+/* ==================== מסך: תחזית ==================== */
+
+function renderForecast() {
+  S.insights ||= IN.analyze(S.txs, S.streams);
+  const fc = ST.forecast(S.txs, S.insights.recurring || [], 3);
+  const host = $('#fc-body');
+  if (!fc) {
+    $('#fc-meta').textContent = '';
+    $('#fc-hero').innerHTML = '';
+    host.innerHTML = '<div class="empty">צריך לפחות שני חודשי היסטוריה כדי לבנות תחזית.</div>';
+    return;
+  }
+  $('#fc-meta').textContent = `בסיס: ${monthLabel(fc.base)} · ודאות ${Math.round(fc.confidence * 100)}%`;
+
+  const first = fc.rows[0];
+  $('#fc-hero').innerHTML = `
+    <div class="eyebrow">צפי נטו ל-${monthLabel(first.month)}</div>
+    <div class="fig ${first.net < 0 ? 'neg' : ''}">${heroFig(first.net)}</div>
+    <div class="note">צפי הכנסה ${money(first.in)} מול הוצאה ${money(first.out)}.
+      מתוכה <b>${money(first.fixed)}</b> קבוע שכבר ידוע.</div>`;
+
+  const cum = fc.rows.at(-1).cumulative;
+  host.innerHTML = table(
+    [{ label: 'חודש' }, { label: 'קבוע', n: true }, { label: 'משתנה', n: true },
+     { label: 'תשלומים', n: true }, { label: 'צפי יציאה', n: true }, { label: 'נטו', n: true }],
+    fc.rows.map(r => ({
+      cells: [
+        monthLabel(r.month),
+        `<span class="num">${money0(r.fixed)}</span>`,
+        `<span class="num">${money0(r.variable)}</span>`,
+        `<span class="num">${r.installments ? money0(r.installments) : '—'}</span>`,
+        `<span class="num">${money0(r.out)}</span>`,
+        `<span class="num" style="color:${r.net >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${r.net < 0 ? '−' : '+'}${money0(Math.abs(r.net))}</span>`,
+      ],
+    })),
+    { foot: ['מצטבר', '', '', '', '', `<span class="num" style="color:${cum >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${cum < 0 ? '−' : '+'}${money0(Math.abs(cum))}</span>`] },
+  ) + (fc.rows.some(r => r.installments) ? `<div class="hint">
+      התשלומים יורדים לאורך התקופה ככל שסדרות מסתיימות — ${fc.rows.map(r => `${monthShort(r.month)}: ${r.openInstallments}`).join(' · ')} סדרות פתוחות.
+    </div>` : '');
 }
 
 function renderHome() {
@@ -380,9 +664,15 @@ function renderAnalysis() {
       ], { fmt: money0 })
     : emptyEl());
 
+  renderAttribution();
+  renderPace();
   renderStreams(st);
   renderDepts(st);
   renderStack();
+  renderVolatility();
+  renderConcentration();
+  renderWeekday();
+  renderCumulative();
   renderSplit('#an-kind', [
     { label: KIND_LABEL.fixed, value: st.kind.fixed, color: 'var(--s1)' },
     { label: KIND_LABEL.variable, value: st.kind.variable, color: 'var(--s2)' },
@@ -690,8 +980,33 @@ function renderLedger() {
 async function renderSettings() {
   $('#st-meta').textContent = `${S.txs.length} תנועות · ${S.rules.length} כללים · ${S.streams.length} מקורות`;
   $('#st-budget').value = S.budget ? S.budget / 100 : '';
-  $('#st-key').value = (await DB.setting('geminiKey')) || '';
-  $('#st-version').textContent = 'כסף · v2';
+  $('#st-key').value = S.hasKey ? '••••••••••••••••' : '';
+  $('#st-key').placeholder = S.hasKey ? 'מפתח שמור ומוצפן' : 'AIza…';
+  $('#st-version').textContent = 'כסף · v3';
+
+  const pinOn = !!(await DB.setting('dekWrapped'));
+  $('#st-security').innerHTML = `
+    <div class="panel" style="margin-bottom:12px">
+      ${table([{ label: 'שכבה' }, { label: 'מצב', n: true }], [
+        { cells: [`${icon('shield', 14)} מדיניות תוכן (CSP)`, '<span style="color:var(--good)">פעילה</span>'] },
+        { cells: ['יעדי רשת מותרים', '<span class="num">1</span>'] },
+        { cells: ['תלויות צד שלישי', '<span class="num">0</span>'] },
+        { cells: ['מפתח API באחסון', S.hasKey ? '<span style="color:var(--good)">מוצפן</span>' : '<span style="color:var(--ink-3)">לא הוגדר</span>'] },
+        { cells: ['מפתח בגיבוי', '<span style="color:var(--good)">אף פעם</span>'] },
+        { cells: ['נעילה בקוד', pinOn ? '<span style="color:var(--good)">פעילה</span>' : '<span style="color:var(--ink-3)">כבויה</span>'] },
+      ])}
+    </div>
+    <button class="btn ghost sm" data-pin="${pinOn ? 'off' : 'on'}">${icon('lock')}${pinOn ? 'ביטול קוד נעילה' : 'הגדרת קוד נעילה'}</button>
+    ${pinOn ? `<div class="field" style="margin-top:12px"><label>נעילה אוטומטית</label>
+      <select class="inp" id="st-autolock">
+        ${[[0, 'כבוי'], [1, 'דקה'], [5, '5 דקות'], [15, '15 דקות'], [60, 'שעה']]
+          .map(([v, l]) => `<option value="${v}" ${S.autoLock === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></div>` : ''}
+    <div class="hint">הקוד גוזר את מפתח ההצפנה ב-PBKDF2 עם 310,000 סיבובים.
+      הוא לא נשמר בשום מקום — בלעדיו הנתונים לא ניתנים לפתיחה, גם לא על ידי.</div>
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn ghost sm" id="st-export-enc">${icon('lock')}גיבוי מוצפן</button>
+    </div>`;
 
   const opts = await DB.setting('geminiModelOptions', []);
   const chosen = await DB.setting('geminiModel');
@@ -1204,6 +1519,59 @@ async function doExport() {
   render();
 }
 
+/* ==================== קוד נעילה וגיבוי מוצפן ==================== */
+
+function openPin(mode) {
+  const on = mode === 'on';
+  $('#pin-title').textContent = on ? 'הגדרת קוד נעילה' : 'ביטול קוד נעילה';
+  $('#pin-body').innerHTML = `
+    <div class="field"><label>${on ? 'קוד חדש — 4 עד 12 ספרות' : 'הקוד הנוכחי'}</label>
+      <input class="inp" id="pin-1" type="password" inputmode="numeric" autocomplete="off"
+        style="text-align:center;font-size:20px;letter-spacing:.3em"></div>
+    ${on ? `<div class="field"><label>אישור</label>
+      <input class="inp" id="pin-2" type="password" inputmode="numeric" autocomplete="off"
+        style="text-align:center;font-size:20px;letter-spacing:.3em"></div>` : ''}
+    <div id="pin-msg"></div>
+    <button class="btn accent" id="pin-go">${on ? 'הפעלה' : 'ביטול הנעילה'}</button>
+    ${on ? `<div class="note warn" style="margin-top:12px">${icon('alert')}<span>
+      אין שחזור. אם תשכח את הקוד הנתונים אבודים — <b>ייצא גיבוי לפני שאתה מפעיל</b>.</span></div>` : ''}`;
+  openSheet('sh-pin');
+  $('#pin-go').onclick = async () => {
+    const a = $('#pin-1').value.trim();
+    const msg = (html) => { $('#pin-msg').innerHTML = html; };
+    try {
+      if (on) {
+        if (a !== $('#pin-2').value.trim()) return msg(`<div class="note bad">${icon('alert')}<span>הקודים אינם תואמים</span></div>`);
+        await Crypto.enablePin(DB, a);
+        // הסוד הוצפן במפתח הישן — צריך לאטום אותו מחדש במפתח החדש
+        const key = $('#st-key').dataset.plain;
+        if (key) await DB.setSecret('geminiKey', key);
+        else if (S.hasKey) { await DB.del('meta', 'geminiKey'); S.hasKey = false; }
+      } else {
+        await Crypto.disablePin(DB, a);
+        if (S.hasKey) { await DB.del('meta', 'geminiKey'); S.hasKey = false; }
+      }
+      closeSheet('sh-pin');
+      toast(on ? 'הנעילה הופעלה' : 'הנעילה בוטלה');
+      renderSettings();
+    } catch (e) { msg(`<div class="note bad">${icon('alert')}<span>${esc(e.message)}</span></div>`); }
+  };
+}
+
+async function doExportEncrypted() {
+  const pass = prompt('סיסמה לגיבוי (8 תווים לפחות). היא לא נשמרת בשום מקום:');
+  if (!pass) return;
+  try {
+    const data = await DB.exportAll();
+    const box = await Crypto.sealExport(JSON.stringify(data), pass);
+    download(`kesef-${todayISO()}.enc.json`, JSON.stringify(box));
+    S.lastExport = Date.now();
+    await DB.setSetting('lastExport', S.lastExport);
+    toast('גיבוי מוצפן ירד');
+    render();
+  } catch (e) { toast(e.message, 3500); }
+}
+
 function doCsv() {
   const head = ['תאריך קנייה', 'תאריך חיוב', 'בית עסק', 'מחלקה', 'קטגוריה', 'תווית מלאה', 'מקור',
     'סכום מקורי', 'מטבע', 'שקלים', 'סוג', 'חיוניות', 'היקף', 'אמצעי', 'תשלומים', 'הערה', 'רישום', 'זרימה'];
@@ -1362,6 +1730,11 @@ function wire() {
     if (hit('#st-import')) { $('#jsonin').click(); return; }
     const th = hit('[data-theme]');
     if (th) { applyTheme(th.dataset.theme); await DB.setSetting('theme', th.dataset.theme); renderSettings(); return; }
+
+    // אבטחה
+    const pn = hit('[data-pin]')?.dataset.pin;
+    if (pn) { openPin(pn); return; }
+    if (hit('#st-export-enc')) { await doExportEncrypted(); return; }
     const rs = hit('[data-restore]');
     if (rs) {
       if (!confirm('לשחזר לגיבוי הזה? המצב הנוכחי יוחלף (ונשמר כגיבוי לפני כן).')) return;
@@ -1420,11 +1793,17 @@ function wire() {
     const file = e.target.files[0]; e.target.value = '';
     if (!file) return;
     try {
-      const data = JSON.parse(await file.text());
+      let data = JSON.parse(await file.text());
+      if (data?.encrypted) {
+        const pass = prompt('הקובץ מוצפן. הקלד את הסיסמה:');
+        if (!pass) return;
+        data = JSON.parse(await Crypto.openExport(data, pass));
+      }
       await DB.snapshot('לפני ייבוא');
       const st = await DB.importAll(data);
       await ensureStreams(); await reload();
-      toast(`יובאו ${st.tx} תנועות`); render();
+      toast(st.dropped ? `יובאו ${st.tx} תנועות · ${st.dropped} נדחו` : `יובאו ${st.tx} תנועות`, 3200);
+      render();
     } catch (err) { toast('ייבוא נכשל: ' + err.message, 3500); }
   });
 
@@ -1432,19 +1811,36 @@ function wire() {
     await DB.setSetting('geminiModel', e.target.value); toast('המודל עודכן');
   });
 
+  // המפתח הגולמי נשמר רק לרגע, כדי לאפשר אטימה מחדש בעת הפעלת קוד נעילה
+  $('#st-key').addEventListener('input', (e) => {
+    const v = e.target.value.trim();
+    if (v && !MASK.test(v)) e.target.dataset.plain = v; else delete e.target.dataset.plain;
+  });
+
+  document.addEventListener('change', async (e) => {
+    if (e.target.id === 'st-autolock') {
+      S.autoLock = Number(e.target.value);
+      await DB.setSetting('autoLockMin', S.autoLock);
+      armAutoLock();
+      toast(S.autoLock ? `נעילה אוטומטית אחרי ${S.autoLock} דקות` : 'נעילה אוטומטית כבויה');
+    }
+  });
+
   addEventListener('scroll', () => C.hideTip(), { passive: true });
 }
 
+const MASK = /^•+$/;
+
 async function saveKey() {
   const key = $('#st-key').value.trim();
-  if (!key) { $('#st-keymsg').innerHTML = `<div class="note bad">${icon('alert')}<span>לא הוזן מפתח</span></div>`; return; }
+  if (!key || MASK.test(key)) { $('#st-keymsg').innerHTML = `<div class="note bad">${icon('alert')}<span>לא הוזן מפתח חדש</span></div>`; return; }
   $('#st-keymsg').innerHTML = `<div class="note info"><div class="spinner"></div><span>בודק…</span></div>`;
   try {
     const model = await AI.testKey(key);
-    await DB.setSetting('geminiKey', key);
+    await DB.setSecret('geminiKey', key);      // נשמר מוצפן, לא בטקסט גלוי
     await AI.resolveModel(key, { force: true });
     S.hasKey = true;
-    $('#st-keymsg').innerHTML = `<div class="note ok">${icon('check')}<span>המפתח עובד · מודל ${esc((model || '').replace('models/', ''))}</span></div>`;
+    $('#st-keymsg').innerHTML = `<div class="note ok">${icon('check')}<span>המפתח נשמר מוצפן · מודל ${esc((model || '').replace('models/', ''))}</span></div>`;
     renderSettings();
   } catch (e) {
     $('#st-keymsg').innerHTML = `<div class="note bad">${icon('alert')}<span>${esc(e.message)}</span></div>`;
@@ -1452,7 +1848,8 @@ async function saveKey() {
 }
 
 async function testKey() {
-  const key = $('#st-key').value.trim() || await DB.setting('geminiKey');
+  const typed = $('#st-key').value.trim();
+  const key = (typed && !MASK.test(typed)) ? typed : await DB.getSecret('geminiKey');
   if (!key) { $('#st-keymsg').innerHTML = `<div class="note bad">${icon('alert')}<span>לא הוזן מפתח</span></div>`; return; }
   $('#st-keymsg').innerHTML = `<div class="note info"><div class="spinner"></div><span>בודק…</span></div>`;
   try {

@@ -1,9 +1,9 @@
 // Service Worker — עבודה אופליין + קליטת צילומי מסך משותפים מהטלפון.
 
-const CACHE = 'kesef-v2';
+const CACHE = 'kesef-v3';
 const SHELL = [
   './', './index.html', './style.css', './app.js', './db.js', './ai.js',
-  './taxonomy.js', './charts.js', './insights.js',
+  './taxonomy.js', './charts.js', './insights.js', './stats.js', './crypto.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
 ];
 

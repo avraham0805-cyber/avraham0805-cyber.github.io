@@ -2,6 +2,14 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
+<!--
+  מדיניות תוכן קשיחה. XSS הוא כל מודל האיום כאן: אין שרת, ולכן הדרך היחידה
+  להוציא נתונים מהמכשיר היא קוד זר שרץ בעמוד. default-src 'none' חוסם הכל,
+  ומה שנפתח נפתח בשם. היעד היחיד שמותר לצאת אליו הוא נקודת הקצה של Gemini.
+  script-src ללא 'unsafe-inline' ו-'unsafe-eval' — אין סקריפט מוטבע בעמוד.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://generativelanguage.googleapis.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
@@ -44,7 +52,20 @@
 <symbol id="ic-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6 18 18M18 6 6 18"/></symbol>
 <symbol id="ic-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></symbol>
 <symbol id="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></symbol>
+<symbol id="ic-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 5-5 4 3 8-8"/><path d="M15 6h5v5"/></symbol>
+<symbol id="ic-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+<symbol id="ic-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.4 2.9 8.2 7 9.5 4.1-1.3 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></symbol>
 </svg>
+
+<div class="sheet" id="sh-lock"><div class="veil"></div><div class="card">
+  <div class="grip"></div><h2 class="title">האפליקציה נעולה</h2>
+  <div id="lock-body"></div>
+</div></div>
+
+<div class="sheet" id="sh-pin"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title" id="pin-title">קוד נעילה</h2>
+  <div id="pin-body"></div>
+</div></div>
 
 <div id="app">
 
@@ -112,6 +133,16 @@
   <div class="tiles" id="an-tiles"></div>
 
   <div class="sec">
+    <header><h2>מה השתנה מהחודש הקודם</h2><div class="aside" id="an-attr-aside"></div></header>
+    <div id="an-attribution"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>קצב ותחזית סוף חודש</h2><div class="aside" id="an-pace-aside"></div></header>
+    <div id="an-pace"></div>
+  </div>
+
+  <div class="sec">
     <header><h2>מהכנסה לנטו</h2><div class="aside">מפל החודש</div></header>
     <div id="an-waterfall"></div>
   </div>
@@ -169,6 +200,47 @@
   <div class="sec">
     <header><h2>התחייבויות בתשלומים</h2></header>
     <div class="scroll-x" id="an-inst"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>יציבות הקטגוריות</h2><div class="aside">מה אפשר לתקצב</div></header>
+    <div class="scroll-x" id="an-volatility"></div>
+    <div class="hint">מקדם השתנות נמוך = ההוצאה חוזרת על עצמה וניתן לתכנן עליה.
+      גבוה = כל תחזית על הקטגוריה הזו היא ניחוש, וגם התקציב עליה יהיה כזה.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="sec">
+      <header><h2>ריכוזיות</h2></header>
+      <div id="an-concentration"></div>
+    </div>
+    <div class="sec">
+      <header><h2>לפי יום בשבוע</h2></header>
+      <div id="an-weekday"></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <header><h2>תזרים מצטבר</h2><div class="aside">נכנס פחות יצא, מצטבר</div></header>
+    <div id="an-cumulative"></div>
+  </div>
+</section>
+
+<!-- ==================== תחזית ==================== -->
+<section class="view" id="v-forecast">
+  <header class="pagehead">
+    <div><h1>תחזית</h1><div class="meta" id="fc-meta"></div></div>
+  </header>
+  <div class="hero" id="fc-hero"></div>
+  <div id="fc-body"></div>
+  <div class="sec">
+    <header><h2>איך זה מחושב</h2></header>
+    <div class="hint" style="margin:0">
+      הקבוע נלקח מהחיובים החוזרים שזוהו בפועל, לא מהערכה. המשתנה הוא
+      <b>חציון</b> שלושת החודשים האחרונים בניכוי הקבוע — חציון ולא ממוצע,
+      כדי שחודש חריג אחד לא יעוות את כל התחזית. התשלומים הפתוחים נוספים
+      לפי לוח הזמנים האמיתי שלהם, כולל החודש שבו כל אחד נגמר.
+    </div>
   </div>
 </section>
 
@@ -270,6 +342,11 @@
   </div>
 
   <div class="sec">
+    <header><h2>אבטחה</h2></header>
+    <div id="st-security"></div>
+  </div>
+
+  <div class="sec">
     <header><h2>תצוגה</h2></header>
     <div class="chipset" id="st-theme"></div>
   </div>
@@ -289,8 +366,8 @@
     <button data-go="home" class="on"><svg><use href="#ic-home"/></svg>בית</button>
     <button data-go="analysis"><svg><use href="#ic-chart"/></svg>ניתוח</button>
     <button id="act-add-2" class="cta"><svg><use href="#ic-plus"/></svg>הוספה</button>
+    <button data-go="forecast"><svg><use href="#ic-trend"/></svg>תחזית</button>
     <button data-go="insights"><svg><use href="#ic-bulb"/></svg>התייעלות</button>
-    <button data-go="ledger"><svg><use href="#ic-list"/></svg>תנועות</button>
   </div>
 </nav>
 
