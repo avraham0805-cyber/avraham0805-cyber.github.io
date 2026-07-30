@@ -80,6 +80,8 @@
 /* ---------- בסיס ---------- */
 
 *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* display מפורש בכל כלל גובר על ברירת המחדל של [hidden] — מחזירים את הסדר */
+[hidden] { display: none !important; }
 html, body { margin: 0; padding: 0; }
 html { -webkit-text-size-adjust: 100%; }
 body {

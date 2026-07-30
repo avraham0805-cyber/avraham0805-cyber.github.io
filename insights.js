@@ -31,6 +31,10 @@ const inc = (rows) => live(rows).filter(t => flowOf(t.dept) === 'in');
 export function findRecurring(txs) {
   const byMerchant = new Map();
   for (const t of out(txs)) {
+    // תשלומים הם לא חיוב חוזר: הרכישה כבר נעשתה, והסדרה תיגמר מעצמה.
+    // בלי הסינון הזה רכישה ב-12 תשלומים מוצגת כ"מנוי שאפשר לבטל" —
+    // עצה שגויה שגם מנפחת את סכום החיסכון.
+    if (t.installment) continue;
     const k = normMerchant(t.merchant);
     if (!k || k.length < 2) continue;
     if (!byMerchant.has(k)) byMerchant.set(k, []);

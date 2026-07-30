@@ -515,6 +515,27 @@ await t('שני חודשים בלבד אינם חיוב חוזר', () => {
   assertEq(IN.findRecurring(rows).length, 0);
 });
 
+await t('רכישה בתשלומים אינה חיוב חוזר', () => {
+  const rows = monthsOf(6).map((m, i) => mk({
+    dateBuy: `${m}-07`, merchant: 'KSP', dept: 'shopping', cat: 'electronics',
+    amount: 49900, installment: { n: i + 1, of: 12 },
+  }));
+  assertEq(IN.findRecurring(rows).length, 0, 'תשלומים סווגו כמנוי');
+});
+
+await t('תשלומים לא נספרים כחיסכון בר-ביטול', () => {
+  const rows = [];
+  monthsOf(6).forEach((m, i) => {
+    rows.push(mk({ dateBuy: `${m}-07`, merchant: 'KSP', dept: 'shopping', cat: 'electronics', amount: 49900, installment: { n: i + 1, of: 12 } }));
+    rows.push(mk({ dateBuy: `${m}-12`, merchant: 'NETFLIX', dept: 'subs', cat: 'streaming', amount: 4500, need: 'discretionary' }));
+    rows.push(mk({ dateBuy: `${m}-14`, merchant: 'Spotify', dept: 'subs', cat: 'streaming', amount: 2190, need: 'discretionary' }));
+  });
+  const subs = IN.analyze(rows, []).findings.find(f => f.id === 'subs-load');
+  assert(subs, 'לא נמצא ממצא מנויים');
+  assert(!subs.evidence.some(e => e.label === 'KSP'), 'KSP הוצג כמנוי שאפשר לבטל');
+  assertEq(subs.annual, (4500 + 2190) * 12, 'הסכום כולל תשלומים');
+});
+
 await t('סכום לא יציב אינו חיוב חוזר', () => {
   const amounts = [1000, 90000, 5000, 40000];
   const rows = monthsOf(4).map((m, i) => mk({ dateBuy: `${m}-12`, merchant: 'משתנה', amount: amounts[i] }));
