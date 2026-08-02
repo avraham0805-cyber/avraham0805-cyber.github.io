@@ -1,7 +1,7 @@
 // מבנה הסיווג — מקור האמת היחיד.
 // שני צירים מאונכים:
 //   מחלקה › קטגוריה  = על מה הכסף יצא
-//   מקור (stream)     = לאיזה מרכז רווח זה שייך — כאן נפגשות הכנסות והוצאות
+//   חשבון            = מאיזה חשבון זה יצא או נכנס — כאן נפגשות הכנסות והוצאות
 
 /* ==================== מחלקות וקטגוריות ==================== */
 
@@ -135,29 +135,21 @@ export const DEPTS = [
   ]},
 ];
 
-/* ==================== מקורות — מרכזי רווח ==================== */
-// כאן נפגשות הכנסות והוצאות של אותה פעילות. "מסחר" צובר גם עמלות וגם משיכות רווח,
-// ולכן אפשר לשאול "כמה המסחר באמת הכניס אחרי כל העלויות".
+/* ==================== חשבונות ==================== */
+// הציר השני. כל תנועה שייכת לחשבון, ולכן אפשר לראות כל בנק בנפרד
+// ואת שניהם יחד — הכנסות והוצאות באותה תמונה, לא בשני מקומות.
 
-export const DEFAULT_STREAMS = [
-  { id: 'household', name: 'משק בית',  kind: 'household',  slot: 0, builtin: true },
-  { id: 'salary',    name: 'משכורת',   kind: 'employment', slot: 2, builtin: true },
-  { id: 'trading',   name: 'מסחר',     kind: 'venture',    slot: 1, builtin: true },
+export const DEFAULT_ACCOUNTS = [
+  { id: 'bank1', name: 'חשבון ראשי',  type: 'bank', slot: 0, builtin: true, active: true },
+  { id: 'bank2', name: 'חשבון שני',   type: 'bank', slot: 1, builtin: true, active: true },
+  { id: 'cash',  name: 'מזומן',       type: 'cash', slot: 2, builtin: true, active: true },
 ];
 
-export const STREAM_KIND_LABEL = {
-  household: 'משק בית', employment: 'שכיר', venture: 'פעילות עסקית', property: 'נכס', other: 'אחר',
-};
+export const ACCOUNT_TYPE_LABEL = { bank: 'חשבון בנק', cash: 'מזומן', card: 'כרטיס אשראי', other: 'אחר' };
 
-/** ניחוש המקור מתוך המחלקה — עובד גם כשהמשתמש לא בחר כלום */
-export function guessStream(deptKey, catKey) {
-  if (deptKey === 'trading') return 'trading';
-  if (deptKey === 'income') {
-    if (catKey === 'salary') return 'salary';
-    if (catKey === 'payout' || catKey === 'dividend') return 'trading';
-    return 'household';
-  }
-  return 'household';
+/** ברירת מחדל לחשבון — מזומן הולך לארנק, כל השאר לחשבון הראשי */
+export function guessAccount(method) {
+  return method === 'cash' ? 'cash' : 'bank1';
 }
 
 /* ==================== תוויות ==================== */
@@ -201,7 +193,6 @@ export function defaultsFor(deptKey, catKey) {
     kind: c?.kind || 'variable',
     need: c?.need || 'essential',
     scope: deptKey === 'trading' ? 'business' : 'personal',
-    stream: guessStream(deptKey, catKey),
   };
 }
 

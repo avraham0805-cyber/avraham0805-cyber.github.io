@@ -8,7 +8,8 @@ SRC = r"C:\Users\avrah\OneDrive\שולחן העבודה\קלוד קוד- התח�
 OUT = r"C:\Users\avrah\OneDrive\שולחן העבודה\קלוד קוד- התחלה\כסף.html"
 
 def read(n):
-    with io.open(os.path.join(SRC, n), encoding="utf-8") as f:
+    # utf-8-sig מסיר BOM אם קיים — אחרת שורת ייבוא ראשונה שורדת אל הצרור
+    with io.open(os.path.join(SRC, n), encoding="utf-8-sig") as f:
         return f.read()
 
 def strip_imports(code):

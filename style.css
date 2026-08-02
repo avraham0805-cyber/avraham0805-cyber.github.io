@@ -125,6 +125,88 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; }
 .panel + .panel { margin-top: 10px; }
 
+/* ============================================================
+   לוח החשבון — האלמנט החתום של האפליקציה.
+   משטח כהה על עמוד בהיר: ניגודיות היא מה שיוצר נוכחות, לא קישוט.
+   הוא נושא את המספר, את המגמה ואת פילוח החשבונות ביחידה אחת.
+   ============================================================ */
+
+.board {
+  background: #14161a; color: #fff; border-radius: 20px; padding: 22px 22px 18px;
+  margin: 4px 0 16px; position: relative; overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0,0,0,.10), 0 12px 28px -14px rgba(0,0,0,.42);
+}
+.board::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 90% at 15% 0%, rgba(255,255,255,.07), transparent 62%);
+}
+.board > * { position: relative; z-index: 1; }
+
+.board .eyebrow {
+  font-size: 10.5px; font-weight: 660; letter-spacing: .12em; text-transform: uppercase;
+  color: rgba(255,255,255,.46); margin-bottom: 10px;
+}
+.board .fig {
+  font-size: clamp(42px, 12.5vw, 58px); font-weight: 660; letter-spacing: -.04em;
+  line-height: .94; font-variant-numeric: proportional-nums; display: flex;
+  align-items: baseline; gap: .1em;
+}
+.board .fig .cur { font-size: .42em; font-weight: 500; color: rgba(255,255,255,.42); letter-spacing: 0; }
+.board .fig.neg { color: #ff8a8a; }
+.board .sub { color: rgba(255,255,255,.58); font-size: 13px; margin-top: 11px; }
+.board .sub b { color: #fff; font-weight: 600; }
+
+.board .meter { background: rgba(255,255,255,.12); margin-top: 15px; height: 5px; border-radius: 3px; }
+.board .meter i { background: #6da7ec; }
+.board .meter i.over { background: #ff8a8a; }
+
+/* מגמה משולבת בתוך הלוח — לא מקטע נפרד */
+.board .spark { margin-top: 18px; display: flex; align-items: flex-end; gap: 3px; height: 40px; }
+.board .spark i {
+  flex: 1; background: rgba(255,255,255,.17); border-radius: 2px 2px 0 0; min-height: 2px;
+  transition: height .5s cubic-bezier(.2,.8,.3,1);
+}
+.board .spark i.now { background: #6da7ec; }
+.board .sparkx { display: flex; gap: 3px; margin-top: 6px; }
+.board .sparkx span { flex: 1; text-align: center; font-size: 9px; color: rgba(255,255,255,.34); }
+
+/* פילוח חשבונות בתוך הלוח */
+.board .accts { display: flex; gap: 18px; margin-top: 18px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,.10); }
+.board .acct { flex: 1; min-width: 0; }
+.board .acct .n { font-size: 11px; color: rgba(255,255,255,.52); display: flex; align-items: center; gap: 5px; }
+.board .acct .n i { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; }
+.board .acct .v { font-size: 16px; font-weight: 640; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.board .acct .d { font-size: 10.5px; color: rgba(255,255,255,.40); margin-top: 1px; font-variant-numeric: tabular-nums; }
+
+/* ---------- בורר חשבון ---------- */
+
+.segmented {
+  display: flex; background: var(--surface-sunk); border: 1px solid var(--rule);
+  border-radius: 10px; padding: 3px; gap: 3px; margin-bottom: 14px;
+}
+.segmented button {
+  flex: 1; padding: 8px 6px; border-radius: 7px; font-size: 12.5px; font-weight: 560;
+  color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; justify-content: center; gap: 6px; transition: .12s;
+}
+.segmented button i { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; }
+.segmented button.on { background: var(--surface-hi); color: var(--ink); font-weight: 640; box-shadow: 0 1px 3px rgba(0,0,0,.09); }
+
+/* ---------- שתי פעולות הענק ---------- */
+
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.action {
+  border-radius: 14px; padding: 18px 14px; display: flex; flex-direction: column;
+  align-items: flex-start; gap: 10px; border: 1px solid var(--rule); background: var(--surface);
+  transition: transform .1s, border-color .12s;
+}
+.action:active { transform: scale(.975); }
+.action svg { width: 22px; height: 22px; }
+.action .t { font-size: 15px; font-weight: 620; letter-spacing: -.01em; }
+.action .s { font-size: 11.5px; color: var(--ink-3); line-height: 1.35; text-align: right; }
+.action.primary { background: var(--ink); border-color: var(--ink); color: var(--plane); }
+.action.primary .s { color: color-mix(in srgb, var(--plane) 62%, transparent); }
+
 /* ---------- מספר גיבור ---------- */
 
 .hero { padding: 4px 0 20px; }

@@ -81,32 +81,24 @@
     </button>
   </header>
 
-  <div class="hero">
-    <div class="eyebrow" id="hero-eyebrow">נשאר להוציא היום</div>
-    <div class="fig" id="hero-fig">—</div>
-    <div class="meter" id="hero-meter" hidden><i></i></div>
-    <div class="note" id="hero-note"></div>
-  </div>
+  <div class="segmented" id="acct-switch"></div>
 
-  <div class="btnrow" style="margin-bottom:16px">
-    <button class="btn" id="act-add"><svg><use href="#ic-plus"/></svg>הוצאה</button>
-    <button class="btn accent" id="act-shot"><svg><use href="#ic-camera"/></svg>צילום מסך</button>
+  <div class="board" id="board"></div>
+
+  <div class="actions">
+    <button class="action primary" id="act-shot">
+      <svg><use href="#ic-camera"/></svg>
+      <span class="t">צילום אשראי</span>
+      <span class="s">כל השורות מפוענחות ומסווגות</span>
+    </button>
+    <button class="action" id="act-cash">
+      <svg><use href="#ic-plus"/></svg>
+      <span class="t">מזומן</span>
+      <span class="s">הוצאה או הכנסה, ארבע שניות</span>
+    </button>
   </div>
 
   <div id="home-alerts"></div>
-
-  <div class="sec">
-    <header><h2>הוספה מהירה</h2></header>
-    <div class="quickgrid" id="quick"></div>
-  </div>
-
-  <div class="sec">
-    <header>
-      <h2>12 החודשים האחרונים</h2>
-      <div class="aside" id="trend-aside"></div>
-    </header>
-    <div id="trend"></div>
-  </div>
 
   <div class="sec">
     <header>
@@ -149,12 +141,12 @@
 
   <div class="sec">
     <header>
-      <h2>מקורות — הכנסה מול הוצאה</h2>
-      <div class="viewtoggle" data-toggle="streams">
+      <h2>חשבונות — הכנסה מול הוצאה</h2>
+      <div class="viewtoggle" data-toggle="accounts">
         <button data-mode="chart" class="on">גרף</button><button data-mode="table">טבלה</button>
       </div>
     </header>
-    <div id="an-streams"></div>
+    <div id="an-accounts"></div>
     <div class="legend">
       <span><i class="swatch" style="background:var(--pos)"></i>נכנס</span>
       <span><i class="swatch" style="background:var(--neg)"></i>יצא</span>
@@ -224,25 +216,16 @@
     <header><h2>תזרים מצטבר</h2><div class="aside">נכנס פחות יצא, מצטבר</div></header>
     <div id="an-cumulative"></div>
   </div>
-</section>
 
-<!-- ==================== תחזית ==================== -->
-<section class="view" id="v-forecast">
-  <header class="pagehead">
-    <div><h1>תחזית</h1><div class="meta" id="fc-meta"></div></div>
-  </header>
-  <div class="hero" id="fc-hero"></div>
-  <div id="fc-body"></div>
   <div class="sec">
-    <header><h2>איך זה מחושב</h2></header>
-    <div class="hint" style="margin:0">
-      הקבוע נלקח מהחיובים החוזרים שזוהו בפועל, לא מהערכה. המשתנה הוא
-      <b>חציון</b> שלושת החודשים האחרונים בניכוי הקבוע — חציון ולא ממוצע,
-      כדי שחודש חריג אחד לא יעוות את כל התחזית. התשלומים הפתוחים נוספים
-      לפי לוח הזמנים האמיתי שלהם, כולל החודש שבו כל אחד נגמר.
-    </div>
+    <header><h2>תחזית שלושה חודשים</h2><div class="aside" id="fc-meta"></div></header>
+    <div id="fc-body"></div>
+    <div class="hint">הקבוע נלקח מהחיובים החוזרים שזוהו בפועל. המשתנה הוא <b>חציון</b>
+      שלושת החודשים האחרונים בניכוי הקבוע — חציון ולא ממוצע, כדי שחודש חריג אחד
+      לא יעוות את התחזית. תשלומים פתוחים נוספים לפי הלוח האמיתי שלהם.</div>
   </div>
 </section>
+
 
 <!-- ==================== התייעלות ==================== -->
 <section class="view" id="v-insights">
@@ -305,10 +288,11 @@
   </div>
 
   <div class="sec">
-    <header><h2>מקורות — מרכזי רווח</h2></header>
-    <div id="st-streams"></div>
-    <button class="btn ghost sm" id="st-addstream" style="margin-top:11px">מקור חדש</button>
-    <div class="hint">כל תנועה משויכת למקור. כך אפשר לשאול "כמה המסחר באמת הכניס אחרי כל העלויות" — במקום לראות את ההוצאות וההכנסות בשני מקומות נפרדים.</div>
+    <header><h2>חשבונות</h2></header>
+    <div id="st-accounts"></div>
+    <button class="btn ghost sm" id="st-addaccount" style="margin-top:11px">חשבון חדש</button>
+    <div class="hint">כל תנועה שייכת לחשבון. בבית אפשר לעבור בין החשבונות או לראות את כולם יחד,
+      וההכנסות וההוצאות של כל חשבון מוצגות באותה תמונה.</div>
   </div>
 
   <div class="sec">
@@ -365,32 +349,32 @@
   <div class="in">
     <button data-go="home" class="on"><svg><use href="#ic-home"/></svg>בית</button>
     <button data-go="analysis"><svg><use href="#ic-chart"/></svg>ניתוח</button>
-    <button id="act-add-2" class="cta"><svg><use href="#ic-plus"/></svg>הוספה</button>
-    <button data-go="forecast"><svg><use href="#ic-trend"/></svg>תחזית</button>
     <button data-go="insights"><svg><use href="#ic-bulb"/></svg>התייעלות</button>
+    <button data-go="ledger"><svg><use href="#ic-list"/></svg>תנועות</button>
   </div>
 </nav>
 
 <!-- ==================== מגירות ==================== -->
 <div class="sheet" id="sh-add"><div class="veil" data-close></div><div class="card">
   <div class="grip"></div>
-  <h2 class="title" id="add-title">הוצאה חדשה</h2>
+  <div class="segmented" id="add-dir"></div>
   <div class="amount"><span class="v zero" id="add-amt">0</span><span class="cur" id="add-cur"> ₪</span></div>
   <div class="chipset" id="add-quick" style="margin-bottom:12px"></div>
   <div class="keys" id="add-keys"></div>
-  <div class="field"><input class="inp" id="add-merch" placeholder="על מה / ממי? (רשות)" autocomplete="off"></div>
+  <div class="field"><input class="inp" id="add-merch" placeholder="על מה? (רשות)" autocomplete="off"></div>
   <div class="pair" style="margin-bottom:12px">
     <div class="field" style="margin:0"><label>קטגוריה</label>
       <button class="inp" id="add-cat" style="text-align:right">בחירה</button></div>
-    <div class="field" style="margin:0"><label>מקור</label>
-      <select class="inp" id="add-stream"></select></div>
+    <div class="field" style="margin:0"><label>חשבון</label>
+      <select class="inp" id="add-account"></select></div>
   </div>
-  <div class="pair" style="margin-bottom:12px">
-    <div class="field" style="margin:0"><label>תאריך</label><input class="inp" id="add-date" type="date"></div>
-    <div class="field" style="margin:0"><label>אמצעי</label><select class="inp" id="add-method"></select></div>
-  </div>
-  <div class="chipset" id="add-flags" style="margin-bottom:14px"></div>
+  <div class="field"><label>תאריך</label><input class="inp" id="add-date" type="date"></div>
   <button class="btn accent" id="add-save">שמירה</button>
+  <button class="btn ghost" id="add-more" style="margin-top:9px">אפשרויות נוספות</button>
+  <div id="add-extra" hidden style="margin-top:12px">
+    <div class="field"><label>אמצעי תשלום</label><select class="inp" id="add-method"></select></div>
+    <div class="chipset" id="add-flags"></div>
+  </div>
 </div></div>
 
 <div class="sheet" id="sh-cat"><div class="veil" data-close></div><div class="card">
@@ -413,9 +397,9 @@
   <div id="fixed-body"></div>
 </div></div>
 
-<div class="sheet" id="sh-stream"><div class="veil" data-close></div><div class="card">
+<div class="sheet" id="sh-account"><div class="veil" data-close></div><div class="card">
   <div class="grip"></div><h2 class="title">מקור</h2>
-  <div id="stream-body"></div>
+  <div id="account-body"></div>
 </div></div>
 
 <div class="toast" id="toast"></div>

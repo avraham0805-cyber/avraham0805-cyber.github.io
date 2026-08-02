@@ -4,7 +4,7 @@
 import * as Crypto from './crypto.js';
 
 const DB_NAME = 'kesef';
-const DB_VER = 3;
+const DB_VER = 4;
 
 /** @type {IDBDatabase|null} */
 let _db = null;
@@ -40,8 +40,13 @@ export function open() {
         // גיבויים מקומיים מתגלגלים — הגנה מפני מחיקה בטעות או קלקול
         db.createObjectStore('snapshots', { keyPath: 'id' });
       }
+      if (!db.objectStoreNames.contains('accounts')) {
+        // חשבונות — הציר שמאפשר לראות כל בנק לחוד ואת שניהם יחד
+        db.createObjectStore('accounts', { keyPath: 'id' });
+      }
+      // גרסאות מוקדמות קראו לזה streams. משאירים את המחסן הישן קיים
+      // כדי שהשדרוג לא ייכשל, אבל אין אליו יותר כתיבה.
       if (!db.objectStoreNames.contains('streams')) {
-        // מרכזי רווח — כאן נפגשות הכנסות והוצאות של אותה פעילות
         db.createObjectStore('streams', { keyPath: 'id' });
       }
       void e;
@@ -247,18 +252,18 @@ export function findDuplicate(rec, existing) {
 /* ---------- ייצוא / ייבוא ---------- */
 
 export async function exportAll() {
-  const [txs, rules, fixed, meta, streams] = await Promise.all([
-    all('tx'), all('rules'), all('fixed'), all('meta'), all('streams'),
+  const [txs, rules, fixed, meta, accounts] = await Promise.all([
+    all('tx'), all('rules'), all('fixed'), all('meta'), all('accounts'),
   ]);
   return {
     app: 'kesef',
-    version: 3,
+    version: 4,
     exportedAt: new Date().toISOString(),
-    counts: { tx: txs.length, rules: rules.length, fixed: fixed.length, streams: streams.length },
+    counts: { tx: txs.length, rules: rules.length, fixed: fixed.length, accounts: accounts.length },
     tx: txs,
     rules,
     fixed,
-    streams,
+    accounts,
     // מפתחות API וחומר הצפנה לעולם לא עוזבים את המכשיר
     meta: meta.filter(m => !NEVER_EXPORT.has(m.k)),
   };
@@ -332,7 +337,7 @@ function cleanTx(r) {
     kind: ONE_OF(r.kind, ['fixed', 'variable', 'oneoff'], 'variable'),
     need: ONE_OF(r.need, ['essential', 'discretionary'], 'essential'),
     scope: ONE_OF(r.scope, ['personal', 'business'], 'personal'),
-    stream: STR(r.stream, 64) || 'household',
+    account: STR(r.account || r.stream, 64) || 'bank1',   // stream = השם הישן
     method: ONE_OF(r.method, ['cash', 'credit', 'bank', 'bit', 'other'], 'cash'),
     installment: inst,
     note: STR(r.note, 200), source: ONE_OF(r.source, ['manual', 'ocr', 'recurring'], 'manual'),
@@ -348,22 +353,23 @@ function cleanTx(r) {
 const cleanRule = (r) => (r && typeof r.key === 'string' && r.key ? {
   key: STR(r.key, 120), merchant: STR(r.merchant, 80),
   dept: STR(r.dept, 24), cat: STR(r.cat, 24),
-  kind: STR(r.kind, 16), need: STR(r.need, 16), scope: STR(r.scope, 16), stream: STR(r.stream, 64),
+  kind: STR(r.kind, 16), need: STR(r.need, 16), scope: STR(r.scope, 16),
   hits: NUM(r.hits, 1e6), updated: NUM(r.updated),
 } : null);
 
 const cleanFixed = (f) => (f && typeof f === 'object' && f.id ? {
   id: STR(f.id, 64), merchant: STR(f.merchant, 80), amount: NUM(f.amount),
-  dept: STR(f.dept, 24), cat: STR(f.cat, 24), stream: STR(f.stream, 64) || 'household',
+  dept: STR(f.dept, 24), cat: STR(f.cat, 24),
+  account: STR(f.account || f.stream, 64) || 'bank1',
   day: Math.max(1, Math.min(31, NUM(f.day) || 1)),
   method: ONE_OF(f.method, ['cash', 'credit', 'bank', 'bit', 'other'], 'bank'),
   need: ONE_OF(f.need, ['essential', 'discretionary'], 'essential'),
   active: f.active !== false, startMonth: STR(f.startMonth, 7),
 } : null);
 
-const cleanStream = (s) => (s && typeof s === 'object' && s.id ? {
+const cleanAccount = (s) => (s && typeof s === 'object' && s.id ? {
   id: STR(s.id, 64), name: STR(s.name, 60) || 'ללא שם',
-  kind: ONE_OF(s.kind, ['household', 'employment', 'venture', 'property', 'other'], 'other'),
+  type: ONE_OF(s.type, ['bank', 'cash', 'card', 'other'], 'bank'),
   slot: Math.max(0, Math.min(7, NUM(s.slot))), active: s.active !== false,
   builtin: s.builtin === true,
 } : null);
@@ -381,17 +387,17 @@ export async function importAll(data, { merge = true } = {}) {
   const tx = take(data.tx, cleanTx);
   const rules = take(data.rules, cleanRule);
   const fixed = take(data.fixed, cleanFixed);
-  const streams = take(data.streams, cleanStream);
+  const accounts = take(data.accounts || data.streams, cleanAccount);
   const meta = take(data.meta, cleanMeta);
 
   const dropped = (Array.isArray(data.tx) ? data.tx.length : 0) - tx.length;
 
-  if (!merge) { await clear('tx'); await clear('rules'); await clear('fixed'); await clear('streams'); }
+  if (!merge) { await clear('tx'); await clear('rules'); await clear('fixed'); await clear('accounts'); }
   if (tx.length) await putMany('tx', tx);
   if (rules.length) await putMany('rules', rules);
   if (fixed.length) await putMany('fixed', fixed);
-  if (streams.length) await putMany('streams', streams);
+  if (accounts.length) await putMany('accounts', accounts);
   for (const m of meta) await put('meta', m);
 
-  return { tx: tx.length, rules: rules.length, fixed: fixed.length, streams: streams.length, dropped };
+  return { tx: tx.length, rules: rules.length, fixed: fixed.length, accounts: accounts.length, dropped };
 }

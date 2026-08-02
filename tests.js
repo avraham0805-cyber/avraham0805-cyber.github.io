@@ -45,7 +45,7 @@ const mk = (o = {}) => ({
   merchant: o.merchant ?? 'עסק', amount: o.amount ?? 10000, ils: o.ils ?? o.amount ?? 10000,
   currency: 'ILS', dept: o.dept || 'food', cat: o.cat || 'super',
   kind: o.kind || 'variable', need: o.need || 'essential', scope: 'personal',
-  stream: o.stream || 'household', method: o.method || 'credit',
+  account: o.account || 'bank1', method: o.method || 'credit',
   installment: o.installment || null, note: '', source: 'manual', confidence: 1,
   needsReview: false, dupOf: o.dupOf || null, raw: '', fixedId: null,
   month: (o.dateBuy || '2026-07-15').slice(0, 7),
@@ -90,8 +90,7 @@ await t('defaultsFor מחזיר ערכים חוקיים לכל צירוף', () =
     const r = TX.defaultsFor(d.key, c.key);
     assert(['fixed', 'variable', 'oneoff'].includes(r.kind), `${d.key}/${c.key} kind`);
     assert(['essential', 'discretionary'].includes(r.need), `${d.key}/${c.key} need`);
-    assert(typeof r.stream === 'string' && r.stream, `${d.key}/${c.key} stream`);
-  }
+    }
 });
 
 await t('קטגוריה לא קיימת לא מפילה', () => {
@@ -530,7 +529,7 @@ await t('תשלומים לא נספרים כחיסכון בר-ביטול', () =>
     rows.push(mk({ dateBuy: `${m}-12`, merchant: 'NETFLIX', dept: 'subs', cat: 'streaming', amount: 4500, need: 'discretionary' }));
     rows.push(mk({ dateBuy: `${m}-14`, merchant: 'Spotify', dept: 'subs', cat: 'streaming', amount: 2190, need: 'discretionary' }));
   });
-  const subs = IN.analyze(rows, []).findings.find(f => f.id === 'subs-load');
+  const subs = IN.analyze(rows).findings.find(f => f.id === 'subs-load');
   assert(subs, 'לא נמצא ממצא מנויים');
   assert(!subs.evidence.some(e => e.label === 'KSP'), 'KSP הוצג כמנוי שאפשר לבטל');
   assertEq(subs.annual, (4500 + 2190) * 12, 'הסכום כולל תשלומים');
@@ -549,7 +548,7 @@ await t('שכר דירה לא מוצג כמנוי שאפשר לבטל', () => {
     rows.push(mk({ dateBuy: `${m}-12`, merchant: 'NETFLIX', dept: 'subs', cat: 'streaming', amount: 4500, kind: 'fixed', need: 'discretionary' }));
     rows.push(mk({ dateBuy: `${m}-14`, merchant: 'Spotify', dept: 'subs', cat: 'streaming', amount: 2190, kind: 'fixed', need: 'discretionary' }));
   });
-  const r = IN.analyze(rows, []);
+  const r = IN.analyze(rows);
   const subs = r.findings.find(f => f.id === 'subs-load');
   assert(subs, 'לא נמצא ממצא מנויים');
   assert(!subs.evidence.some(e => e.label.includes('שכר דירה')), 'שכר דירה נספר כמנוי');
@@ -563,7 +562,7 @@ await t('הכותרת לא סופרת ממצאים חופפים פעמיים', (
     rows.push(mk({ dateBuy: `${m}-14`, merchant: 'Spotify', dept: 'subs', cat: 'streaming', amount: 2190, need: 'discretionary' }));
     rows.push(mk({ dateBuy: `${m}-02`, amount: 30000 }));
   });
-  const r = IN.analyze(rows, []);
+  const r = IN.analyze(rows);
   const counted = r.findings.filter(f => f.countInTotal !== false);
   assertEq(r.totalAnnual, counted.reduce((s, f) => s + f.annual, 0));
   assert(r.findings.some(f => f.countInTotal === false), 'לא סומן אף ממצא כחופף');
@@ -576,19 +575,8 @@ await t('פער מזומן מזוהה', () => {
     rows.push(mk({ dateBuy: `${m}-06`, amount: 10000, method: 'cash' }));
     rows.push(mk({ dateBuy: `${m}-07`, amount: 20000 }));
   });
-  const f = IN.analyze(rows, []).findings.find(x => x.id === 'cash-gap');
+  const f = IN.analyze(rows).findings.find(x => x.id === 'cash-gap');
   assert(f, 'פער המזומן לא זוהה');
-});
-
-await t('מקור עם הוצאות ובלי הכנסות מסומן', () => {
-  const streams = [{ id: 'trading', name: 'מסחר', kind: 'venture' }];
-  const rows = monthsOf(6).flatMap(m => [
-    mk({ dateBuy: `${m}-03`, dept: 'trading', cat: 'platforms', amount: 20000, stream: 'trading' }),
-    mk({ dateBuy: `${m}-05`, amount: 30000 }),
-  ]);
-  const f = IN.analyze(rows, streams).findings.find(x => x.id === 'stream-drag');
-  assert(f, 'לא זוהה מקור שצורך בלי להחזיר');
-  assertEq(f.severity, 'critical');
 });
 
 /* ==================== גרפים ==================== */

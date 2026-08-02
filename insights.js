@@ -280,40 +280,6 @@ function checkFeeLoad(txs) {
   );
 }
 
-function checkStreamDrag(txs, streams) {
-  const cur = recentMonths(txs, 6);
-  const findings = [];
-  for (const st of streams) {
-    const rows = cur.filter(t => (t.stream || 'household') === st.id);
-    const i = inc(rows).reduce((s, t) => s + ils(t), 0);
-    const o = out(rows).reduce((s, t) => s + ils(t), 0);
-    if (!i && !o) continue;
-    if (st.kind === 'household') continue;      // משק בית לא אמור להרוויח
-    if (i === 0 && o > 0) {
-      findings.push({ st, i, o, net: -o, ratio: Infinity });
-    } else if (i > 0 && o / i > 0.35) {
-      findings.push({ st, i, o, net: i - o, ratio: o / i });
-    }
-  }
-  if (!findings.length) return null;
-  const worst = findings.sort((a, b) => a.net - b.net)[0];
-  const bleeding = worst.i === 0;
-  return F(
-    'stream-drag', bleeding || worst.net < 0 ? 'critical' : 'serious',
-    bleeding ? `"${worst.st.name}" צורך בלי להחזיר` : `"${worst.st.name}" — העלויות אוכלות ${Math.round(worst.ratio * 100)}% מההכנסה`,
-    bleeding
-      ? `${money(worst.o)} הוצאות ב-6 חודשים, אפס הכנסה רשומה. או שהפעילות באמת מפסידה, או שאתה לא רושם את ההכנסות שלה — ובלי זה אי אפשר לדעת אם היא שווה את עצמה.`
-      : `${money(worst.i)} נכנסו, ${money(worst.o)} יצאו, נטו ${money(worst.net)} ב-6 חודשים. יחס עלות-להכנסה של ${(worst.ratio * 100).toFixed(0)}%.`,
-    bleeding ? 'רשום את ההכנסות של המקור הזה — אחרת אין לך תמונה אמיתית.' : 'זהה איזו עלות בתוך המקור הזה הכי כבדה ובדוק אם היא באמת מייצרת את ההכנסה.',
-    bleeding ? 0 : Math.round(worst.o * 0.2 * 2),
-    findings.map(f => ({
-      label: f.st.name, sub: `נכנס ${money(f.i)} · יצא ${money(f.o)}`,
-      value: f.net, note: f.i ? `יחס ${(f.ratio * 100).toFixed(0)}%` : 'אין הכנסה',
-    })),
-    false,   // הערכה, לא חיסכון ודאי
-  );
-}
-
 function checkAnomalies(txs) {
   const byMerchant = new Map();
   for (const t of out(txs)) {
@@ -409,7 +375,7 @@ export function setFormatter(fn) { _money = fn; }
 
 /* ==================== נקודת הכניסה ==================== */
 
-export function analyze(txs, streams = []) {
+export function analyze(txs) {
   const rows = live(txs);
   if (rows.length < 5) {
     return {
@@ -422,7 +388,6 @@ export function analyze(txs, streams = []) {
   const rec = findRecurring(rows);
   const checks = [
     checkSavingsRate(rows),
-    checkStreamDrag(rows, streams),
     checkFeeLoad(rows),
     checkPriceCreep(rows, rec),
     checkSubscriptionLoad(rows, rec),

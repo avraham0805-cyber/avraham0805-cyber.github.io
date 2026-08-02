@@ -5,8 +5,8 @@ import * as IN from './insights.js';
 import * as ST from './stats.js';
 import * as Crypto from './crypto.js';
 import {
-  DEPTS, EXPENSE_DEPTS, QUICK_SEED, DEFAULT_STREAMS, STREAM_KIND_LABEL,
-  dept, cat, pathLabel, catLabel, flowOf, defaultsFor, guessStream,
+  DEPTS, EXPENSE_DEPTS, QUICK_SEED, DEFAULT_ACCOUNTS, ACCOUNT_TYPE_LABEL,
+  dept, cat, pathLabel, catLabel, flowOf, defaultsFor, guessAccount,
   KIND_LABEL, NEED_LABEL, METHOD_LABEL,
 } from './taxonomy.js';
 
@@ -64,21 +64,21 @@ const closeAll = () => { $$('.sheet.on').forEach(s => s.classList.remove('on'));
 /* ==================== מצב ==================== */
 
 const S = {
-  txs: [], rules: [], fixed: [], streams: [],
+  txs: [], rules: [], fixed: [], accounts: [],
   budget: 0, fx: { USD: 3.7, EUR: 4.0, GBP: 4.7 },
   month: curMonth(), view: 'home',
-  q: '', filter: 'all', deptFilter: null, streamFilter: null,
+  q: '', filter: 'all', deptFilter: null, acctFilter: null,
   lastExport: 0, hasKey: false,
-  modes: { streams: 'chart', depts: 'chart', stack: 'chart', heat: 'chart' },
+  modes: { accounts: 'chart', depts: 'chart', stack: 'chart', heat: 'chart' },
   analysis: null, insights: null,
 };
 
 const ils = (t) => t.ils ?? t.amount ?? 0;
 const live = (rows) => rows.filter(t => !t.dupOf);
-const streamOf = (t) => t.stream || 'household';
-const streamName = (id) => S.streams.find(s => s.id === id)?.name || 'לא משויך';
-const streamColor = (id) => {
-  const s = S.streams.find(x => x.id === id);
+const acctOf = (t) => t.account || 'bank1';
+const acctName = (id) => S.accounts.find(s => s.id === id)?.name || 'לא משויך';
+const acctColor = (id) => {
+  const s = S.accounts.find(x => x.id === id);
   return s ? C.seriesVar(s.slot ?? 0) : C.OTHER_COLOR;
 };
 
@@ -100,7 +100,7 @@ async function init() {
   if (state === 'needs-pin') { showLock(); return; }
   await DB.migrateSecrets();
 
-  await ensureStreams();
+  await ensureAccounts();
   await reload();
 
   S.budget = await DB.setting('budget', 0);
@@ -113,7 +113,7 @@ async function init() {
   armAutoLock();
 
   await applyFixedForMonth(curMonth());
-  await backfillStreams();
+  await backfillAccounts();
   wire();
   render();
 
@@ -131,24 +131,24 @@ async function init() {
 }
 
 async function reload() {
-  [S.txs, S.rules, S.fixed, S.streams] = await Promise.all([
-    DB.allTx(), DB.all('rules'), DB.all('fixed'), DB.all('streams'),
+  [S.txs, S.rules, S.fixed, S.accounts] = await Promise.all([
+    DB.allTx(), DB.all('rules'), DB.all('fixed'), DB.all('accounts'),
   ]);
-  S.streams.sort((a, b) => (a.slot ?? 9) - (b.slot ?? 9));
+  S.accounts.sort((a, b) => (a.slot ?? 9) - (b.slot ?? 9));
   S.analysis = null; S.insights = null;
 }
 
-async function ensureStreams() {
-  const have = await DB.all('streams');
+async function ensureAccounts() {
+  const have = await DB.all('accounts');
   if (have.length) return;
-  await DB.putMany('streams', DEFAULT_STREAMS.map(s => ({ ...s, active: true })));
+  await DB.putMany('accounts', DEFAULT_ACCOUNTS.map(s => ({ ...s, active: true })));
 }
 
 /** תנועות ישנות שנשמרו לפני שהיו מקורות מקבלות שיוך לפי המחלקה */
-async function backfillStreams() {
-  const missing = S.txs.filter(t => !t.stream);
+async function backfillAccounts() {
+  const missing = S.txs.filter(t => !t.account);
   if (!missing.length) return;
-  for (const t of missing) t.stream = guessStream(t.dept, t.cat);
+  for (const t of missing) t.account = guessAccount(t.method);
   await DB.saveTxMany(missing);
   await reload();
 }
@@ -231,7 +231,7 @@ async function applyFixedForMonth(month) {
     add.push(mkTx({
       dateBuy: day(f.day), merchant: f.merchant, amount: f.amount, ils: f.amount,
       dept: f.dept, cat: f.cat, kind: 'fixed', need: f.need || 'essential',
-      stream: f.stream, method: f.method || 'bank',
+      account: f.account, method: f.method || 'bank',
       note: 'הוצאה קבועה', source: 'recurring', fixedId: f.id, confidence: 1,
     }));
   }
@@ -250,7 +250,7 @@ function mkTx(p) {
     amount: p.amount || 0, currency: p.currency || 'ILS', ils: p.ils ?? p.amount ?? 0,
     dept: p.dept || 'food', cat: p.cat || 'general',
     kind: p.kind || d.kind, need: p.need || d.need, scope: p.scope || d.scope,
-    stream: p.stream || d.stream,
+    account: p.account || d.account,
     method: p.method || 'cash',
     installment: p.installment || null,
     note: p.note || '', source: p.source || 'manual',
@@ -265,21 +265,23 @@ const toILS = (amount, currency) =>
 
 /* ==================== חישובים ==================== */
 
-function statsFor(month) {
-  const rows = live(S.txs.filter(t => t.month === month));
+const statsFor = (month) => statsOf(S.txs, month);
+
+function statsOf(source, month) {
+  const rows = live(source.filter(t => t.month === month));
   const st = {
     out: 0, in: 0, neutral: 0, count: rows.length,
-    byDept: {}, byCat: {}, byMerchant: {}, byDay: {}, byStream: {},
+    byDept: {}, byCat: {}, byMerchant: {}, byDay: {}, byAccount: {},
     kind: { fixed: 0, variable: 0, oneoff: 0 },
     need: { essential: 0, discretionary: 0 },
   };
   for (const t of rows) {
-    const f = flowOf(t.dept), v = ils(t), sid = streamOf(t);
-    st.byStream[sid] ||= { in: 0, out: 0 };
-    if (f === 'in') { st.in += v; st.byStream[sid].in += v; continue; }
+    const f = flowOf(t.dept), v = ils(t), sid = acctOf(t);
+    st.byAccount[sid] ||= { in: 0, out: 0 };
+    if (f === 'in') { st.in += v; st.byAccount[sid].in += v; continue; }
     if (f === 'neutral') { st.neutral += v; continue; }
     st.out += v;
-    st.byStream[sid].out += v;
+    st.byAccount[sid].out += v;
     st.byDept[t.dept] = (st.byDept[t.dept] || 0) + v;
     st.byCat[`${t.dept}/${t.cat}`] = (st.byCat[`${t.dept}/${t.cat}`] || 0) + v;
     const mk = (t.merchant || '').trim() || pathLabel(t.dept, t.cat);
@@ -337,12 +339,12 @@ function txRow(t) {
     t.needsReview ? '<span class="pill warn">לאישור</span>' : '',
     t.currency !== 'ILS' ? `<span class="pill">${CUR_SIGN[t.currency]}${(t.amount / 100).toLocaleString('he-IL')}</span>` : '',
   ].join('');
-  const stream = S.streams.length > 1 ? ` · ${esc(streamName(streamOf(t)))}` : '';
+  const acctTag = S.accounts.length > 1 ? ` · ${esc(acctName(acctOf(t)))}` : '';
   return `<button class="row" data-tx="${t.id}">
     <span class="gl">${icon(D?.icon || 'list')}</span>
     <span class="body">
       <span class="t1">${esc(t.merchant || catLabel(t.dept, t.cat))}${pills}</span>
-      <span class="t2">${esc(catLabel(t.dept, t.cat))} · ${t.dateBuy.slice(8)}.${t.dateBuy.slice(5, 7)} · ${METHOD_LABEL[t.method] || ''}${stream}</span>
+      <span class="t2">${esc(catLabel(t.dept, t.cat))} · ${t.dateBuy.slice(8)}.${t.dateBuy.slice(5, 7)} · ${METHOD_LABEL[t.method] || ''}${acctTag}</span>
     </span>
     <span class="amt ${cls}">${f === 'in' ? '+' : ''}${money(ils(t))}</span>
   </button>`;
@@ -356,7 +358,7 @@ function render() {
   $$('nav.tabbar button[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === S.view));
   C.hideTip();
   ({
-    home: renderHome, analysis: renderAnalysis, forecast: renderForecast,
+    home: renderHome, analysis: renderAnalysis,
     insights: renderInsights, ledger: renderLedger, settings: renderSettings,
   })[S.view]();
 }
@@ -555,23 +557,17 @@ function renderCumulative() {
 /* ==================== מסך: תחזית ==================== */
 
 function renderForecast() {
-  S.insights ||= IN.analyze(S.txs, S.streams);
+  S.insights ||= IN.analyze(S.txs);
   const fc = ST.forecast(S.txs, S.insights.recurring || [], 3);
   const host = $('#fc-body');
   if (!fc) {
     $('#fc-meta').textContent = '';
-    $('#fc-hero').innerHTML = '';
     host.innerHTML = '<div class="empty">צריך לפחות שני חודשי היסטוריה כדי לבנות תחזית.</div>';
     return;
   }
-  $('#fc-meta').textContent = `בסיס: ${monthLabel(fc.base)} · ודאות ${Math.round(fc.confidence * 100)}%`;
-
   const first = fc.rows[0];
-  $('#fc-hero').innerHTML = `
-    <div class="eyebrow">צפי נטו ל-${monthLabel(first.month)}</div>
-    <div class="fig ${first.net < 0 ? 'neg' : ''}">${heroFig(first.net)}</div>
-    <div class="note">צפי הכנסה ${money(first.in)} מול הוצאה ${money(first.out)}.
-      מתוכה <b>${money(first.fixed)}</b> קבוע שכבר ידוע.</div>`;
+  $('#fc-meta').innerHTML =
+    `צפי נטו ל${monthShort(first.month)}: <b style="color:${first.net >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${first.net < 0 ? '−' : '+'}${money0(Math.abs(first.net))}</b> · ודאות ${Math.round(fc.confidence * 100)}%`;
 
   const cum = fc.rows.at(-1).cumulative;
   host.innerHTML = table(
@@ -593,76 +589,106 @@ function renderForecast() {
     </div>` : '');
 }
 
+/**
+ * ספירה כלפי מעלה — נותנת למספר משקל בלי להאט את המשתמש.
+ *
+ * הכלל: הערך הסופי נכתב תמיד, גם אם האנימציה לא תרוץ לעולם.
+ * requestAnimationFrame קפוא בלשונית שאינה מצוירת, ובלי הכתיבה הזו
+ * המספר החשוב במסך היה נשאר ריק — כישלון שקט של הדבר היחיד שחייב להופיע.
+ */
+function countUp(el, to, render) {
+  const from = Number(el.dataset.v ?? 0);
+  el.dataset.v = to;
+  el.innerHTML = render(to);
+
+  const still = from === to
+    || matchMedia('(prefers-reduced-motion: reduce)').matches
+    || document.visibilityState !== 'visible';
+  if (still) return;
+
+  const t0 = performance.now(), dur = 520;
+  let done = false;
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.innerHTML = render(Math.round(from + (to - from) * eased));
+    if (p < 1) requestAnimationFrame(step); else done = true;
+  };
+  requestAnimationFrame(step);
+  // רשת ביטחון: אם המסגרות נעצרו באמצע, הערך הסופי עדיין ננעל
+  setTimeout(() => { if (!done) el.innerHTML = render(to); }, dur + 120);
+}
+
 function renderHome() {
-  const m = curMonth(), st = statsFor(m), now = new Date();
+  const m = curMonth(), now = new Date();
   $('#home-date').textContent = now.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
 
-  if (S.budget > 0) {
-    const left = S.budget - st.out;
+  // ---- בורר חשבון ----
+  const acts = S.accounts.filter(a => a.active !== false);
+  $('#acct-switch').innerHTML =
+    `<button class="${!S.acctFilter ? 'on' : ''}" data-acctsel="">הכל</button>` +
+    acts.map(a => `<button class="${S.acctFilter === a.id ? 'on' : ''}" data-acctsel="${esc(a.id)}">
+      <i style="background:${C.seriesVar(a.slot ?? 0)}"></i>${esc(a.name)}</button>`).join('');
+
+  const scoped = S.acctFilter ? S.txs.filter(t => acctOf(t) === S.acctFilter) : S.txs;
+  const st = statsOf(scoped, m);
+
+  // ---- הלוח ----
+  const board = $('#board');
+  const budget = S.acctFilter ? 0 : S.budget;   // התקציב הוא של משק הבית, לא של חשבון בודד
+  const months = monthsBack(12);
+  const series = months.map(mm => ({ month: mm, value: statsOf(scoped, mm).out }));
+  const peak = Math.max(...series.map(s => s.value), 1);
+
+  let eyebrow, figVal, sub, meter = '';
+  if (budget > 0) {
     const daysLeft = Math.max(1, daysInMonth(m) - now.getDate() + 1);
-    const perDay = Math.floor(left / daysLeft);
-    $('#hero-eyebrow').textContent = 'נשאר להוציא היום';
-    $('#hero-fig').innerHTML = heroFig(perDay);
-    $('#hero-fig').classList.toggle('neg', perDay < 0);
-    $('#hero-meter').hidden = false;
-    const bar = $('#hero-meter i');
-    bar.style.width = Math.min(100, pct(st.out, S.budget)) + '%';
-    bar.classList.toggle('over', st.out > S.budget);
-    $('#hero-note').innerHTML =
-      `<b>${money(st.out)}</b> מתוך ${money(S.budget)} · נותרו ${daysLeft} ימים בחודש`;
+    figVal = Math.floor((budget - st.out) / daysLeft);
+    eyebrow = 'נשאר להוציא היום';
+    sub = `<b>${money(st.out)}</b> מתוך ${money(budget)} · נותרו ${daysLeft} ימים`;
+    meter = `<div class="meter"><i class="${st.out > budget ? 'over' : ''}" style="width:${Math.min(100, pct(st.out, budget))}%"></i></div>`;
   } else {
-    $('#hero-eyebrow').textContent = 'הוצאת החודש';
-    $('#hero-fig').innerHTML = heroFig(st.out);
-    $('#hero-fig').classList.remove('neg');
-    $('#hero-meter').hidden = true;
-    $('#hero-note').innerHTML = `<button id="go-budget" style="text-decoration:underline;color:var(--accent)">הגדר תקציב חודשי</button> כדי לראות כמה נשאר להיום`;
+    figVal = st.out;
+    eyebrow = S.acctFilter ? `יצא ב${acctName(S.acctFilter)} החודש` : 'הוצאת החודש';
+    sub = st.in
+      ? `נכנס <b>${money(st.in)}</b> · נטו <b>${money(st.net)}</b>`
+      : `<button id="go-budget" style="text-decoration:underline;color:inherit">הגדר תקציב</button> כדי לראות כמה נשאר להיום`;
   }
 
-  // התראות
+  board.innerHTML = `
+    <div class="eyebrow">${eyebrow}</div>
+    <div class="fig ${figVal < 0 ? 'neg' : ''}" id="board-fig"></div>
+    ${meter}
+    <div class="sub">${sub}</div>
+    <div class="spark">${series.map(s =>
+      `<i class="${s.month === m ? 'now' : ''}" style="height:${Math.max(2, s.value / peak * 100)}%"
+          title="${monthLabel(s.month)} · ${money0(s.value)}"></i>`).join('')}</div>
+    <div class="sparkx">${series.map((s, i) =>
+      `<span>${(i === 0 || i === series.length - 1 || i === 6) ? monthShort(s.month) : ''}</span>`).join('')}</div>
+    ${!S.acctFilter && acts.length > 1 ? `<div class="accts">${acts.map(a => {
+      const e = st.byAccount[a.id] || { in: 0, out: 0 };
+      return `<div class="acct">
+        <div class="n"><i style="background:${C.seriesVar(a.slot ?? 0)}"></i>${esc(a.name)}</div>
+        <div class="v">${money0(e.out)}</div>
+        <div class="d">${e.in ? `נכנס ${money0(e.in)}` : 'ללא הכנסה'}</div>
+      </div>`;
+    }).join('')}</div>` : ''}`;
+  countUp($('#board-fig'), figVal, heroFig);
+
+  // ---- התראות ----
   const alerts = [];
   const review = S.txs.filter(t => t.needsReview).length;
-  if (review) alerts.push(`<div class="note info">${icon('info')}<span class="grow">${review} תנועות מפוענחות ממתינות לאישור</span><button data-act="review">פתח</button></div>`);
-  if (!S.hasKey) alerts.push(`<div class="note warn">${icon('key')}<span class="grow">לא הוגדר מפתח Gemini — פענוח צילומים כבוי</span><button data-act="settings">הגדר</button></div>`);
+  if (review) alerts.push(`<div class="note info">${icon('info')}<span class="grow">${review} שורות מפוענחות ממתינות לאישור</span><button data-act="review">פתח</button></div>`);
   if (S.txs.length > 5) {
     const days = S.lastExport ? Math.floor((Date.now() - S.lastExport) / 864e5) : 999;
     if (days > 7) alerts.push(`<div class="note warn">${icon('save')}<span class="grow">${S.lastExport ? `גיבוי אחרון לפני ${days} ימים` : 'עוד לא גיבית את הנתונים'}</span><button data-act="export">גבה</button></div>`);
   }
   $('#home-alerts').innerHTML = alerts.join('');
 
-  // צ'יפים מהירים
-  const freq = {};
-  for (const t of live(S.txs)) {
-    if (flowOf(t.dept) !== 'out') continue;
-    freq[`${t.dept}/${t.cat}`] = (freq[`${t.dept}/${t.cat}`] || 0) + 1;
-  }
-  const keys = [...new Set([
-    ...Object.entries(freq).sort((a, b) => b[1] - a[1]).map(e => e[0]),
-    ...QUICK_SEED.map(([d, c]) => `${d}/${c}`),
-  ])].filter(k => cat(...k.split('/'))).slice(0, 8);
-  $('#quick').innerHTML = keys.map(k => {
-    const [dk, ck] = k.split('/');
-    return `<button class="quick" data-quick="${k}" aria-label="${esc(pathLabel(dk, ck))}">
-      ${icon(dept(dk).icon, 19)}<span class="lbl">${esc(catLabel(dk, ck))}</span></button>`;
-  }).join('');
-
-  // מגמת 12 חודשים
-  const months = monthsBack(12);
-  const series = months.map(mm => {
-    const s = statsFor(mm);
-    return { label: monthShort(mm), value: s.out, sub: `${s.count} תנועות`, current: mm === m, month: mm };
-  });
-  const host = $('#trend');
-  host.replaceChildren(C.columns(series, {
-    fmt: money0,
-    onPick: (d) => { S.month = d.month; S.view = 'analysis'; render(); },
-  }));
-  const withData = series.filter(s => s.value > 0);
-  const avg = withData.length ? Math.round(withData.reduce((a, b) => a + b.value, 0) / withData.length) : 0;
-  $('#trend-aside').innerHTML = avg ? `ממוצע <b>${money0(avg)}</b>` : '';
-
-  $('#recent').innerHTML = S.txs.length
-    ? `<div class="rows">${S.txs.slice(0, 7).map(txRow).join('')}</div>`
-    : '<div class="empty">אין עדיין תנועות.<br>הוסף הוצאה או זרוק צילום מסך של דף האשראי.</div>';
+  const recent = scoped.slice(0, 8);
+  $('#recent').innerHTML = recent.length
+    ? `<div class="rows">${recent.map(txRow).join('')}</div>`
+    : '<div class="empty">אין עדיין תנועות.<br>צלם דף אשראי או הוסף מזומן.</div>';
 }
 
 /* ==================== מסך: ניתוח ==================== */
@@ -678,7 +704,7 @@ function renderAnalysis() {
 
   $('#an-tiles').innerHTML = `
     <div class="tile"><div class="k">יצא</div><div class="v">${money0(st.out)}</div><div class="d">${st.count} תנועות</div></div>
-    <div class="tile"><div class="k">נכנס</div><div class="v pos">${money0(st.in)}</div><div class="d">${Object.values(st.byStream).filter(s => s.in).length} מקורות</div></div>
+    <div class="tile"><div class="k">נכנס</div><div class="v pos">${money0(st.in)}</div><div class="d">${Object.values(st.byAccount).filter(s => s.in).length} מקורות</div></div>
     <div class="tile"><div class="k">נטו</div><div class="v ${st.net >= 0 ? 'pos' : 'neg'}">${st.net < 0 ? '−' : ''}${money0(st.net)}</div><div class="d">${st.in ? pct(st.net, st.in) + '% מההכנסה' : '—'}</div></div>`;
 
   // מפל
@@ -694,7 +720,7 @@ function renderAnalysis() {
 
   renderAttribution();
   renderPace();
-  renderStreams(st);
+  renderAccounts(st);
   renderDepts(st);
   renderStack();
   renderVolatility();
@@ -711,6 +737,7 @@ function renderAnalysis() {
     { label: NEED_LABEL.discretionary, value: st.need.discretionary, color: 'var(--s2)' },
   ], st.out);
   renderHeat(st, m);
+  renderForecast();
 
   // בתי עסק
   const merch = Object.entries(st.byMerchant).sort((a, b) => b[1] - a[1]).slice(0, 12);
@@ -744,22 +771,22 @@ const emptyEl = () => {
   return d;
 };
 
-function renderStreams(st) {
-  const host = $('#an-streams');
-  const rows = S.streams.map(s => {
-    const e = st.byStream[s.id] || { in: 0, out: 0 };
+function renderAccounts(st) {
+  const host = $('#an-accounts');
+  const rows = S.accounts.map(s => {
+    const e = st.byAccount[s.id] || { in: 0, out: 0 };
     return { id: s.id, label: s.name, inV: e.in, outV: e.out, net: e.in - e.out };
   }).filter(r => r.inV || r.outV);
 
   if (!rows.length) { host.replaceChildren(emptyEl()); return; }
 
-  if (S.modes.streams === 'table') {
+  if (S.modeS.accounts === 'table') {
     host.innerHTML = table(
       [{ label: 'מקור' }, { label: 'נכנס', n: true }, { label: 'יצא', n: true }, { label: 'נטו', n: true }, { label: 'יחס', n: true }],
       rows.map(r => ({
-        click: true, data: `data-streamrow="${r.id}"`,
+        click: true, data: `data-acctrow="${r.id}"`,
         cells: [
-          `<i class="swatch" style="background:${streamColor(r.id)}"></i>${esc(r.label)}`,
+          `<i class="swatch" style="background:${acctColor(r.id)}"></i>${esc(r.label)}`,
           `<span class="num">${money(r.inV)}</span>`,
           `<span class="num">${money(r.outV)}</span>`,
           `<span class="num" style="color:${r.net >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${r.net < 0 ? '−' : '+'}${money(Math.abs(r.net))}</span>`,
@@ -776,7 +803,7 @@ function renderStreams(st) {
   } else {
     host.replaceChildren(C.butterfly(rows, {
       fmt: money0,
-      onPick: (r) => { S.streamFilter = r.id; S.view = 'ledger'; render(); },
+      onPick: (r) => { S.acctFilter = r.id; S.view = 'ledger'; render(); },
     }));
   }
 }
@@ -889,7 +916,7 @@ function renderHeat(st, m) {
 /* ==================== מסך: התייעלות ==================== */
 
 function renderInsights() {
-  S.insights ||= IN.analyze(S.txs, S.streams);
+  S.insights ||= IN.analyze(S.txs);
   const R = S.insights;
 
   if (!R.ready) {
@@ -971,12 +998,12 @@ function renderLedger() {
   const D = S.deptFilter ? dept(S.deptFilter) : null;
   $('#lg-filters').innerHTML =
     (D ? `<button class="chip on" data-f="cleardept">${esc(D.label)} ✕</button>` : '') +
-    (S.streamFilter ? `<button class="chip on" data-f="clearstream"><i class="swatch" style="background:${streamColor(S.streamFilter)}"></i>${esc(streamName(S.streamFilter))} ✕</button>` : '') +
+    (S.acctFilter ? `<button class="chip on" data-f="clearacct"><i class="swatch" style="background:${acctColor(S.acctFilter)}"></i>${esc(acctName(S.acctFilter))} ✕</button>` : '') +
     FILTERS.map(([k, l]) => `<button class="chip ${S.filter === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('');
 
   let rows = S.txs;
   if (S.deptFilter) rows = rows.filter(t => t.dept === S.deptFilter);
-  if (S.streamFilter) rows = rows.filter(t => streamOf(t) === S.streamFilter);
+  if (S.acctFilter) rows = rows.filter(t => acctOf(t) === S.acctFilter);
   const q = S.q.trim().toLowerCase();
   if (q) rows = rows.filter(t =>
     (t.merchant || '').toLowerCase().includes(q) ||
@@ -1006,7 +1033,7 @@ function renderLedger() {
 /* ==================== מסך: הגדרות ==================== */
 
 async function renderSettings() {
-  $('#st-meta').textContent = `${S.txs.length} תנועות · ${S.rules.length} כללים · ${S.streams.length} מקורות`;
+  $('#st-meta').textContent = `${S.txs.length} תנועות · ${S.rules.length} כללים · ${S.accounts.length} מקורות`;
   $('#st-budget').value = S.budget ? S.budget / 100 : '';
   $('#st-key').value = S.hasKey ? '••••••••••••••••' : '';
   $('#st-key').placeholder = S.hasKey ? 'מפתח שמור ומוצפן' : 'AIza…';
@@ -1043,14 +1070,14 @@ async function renderSettings() {
     $('#st-model').innerHTML = opts.map(o => `<option value="${esc(o)}" ${o === chosen ? 'selected' : ''}>${esc(o.replace('models/', ''))}</option>`).join('');
   }
 
-  $('#st-streams').innerHTML = `<div class="rows">` + S.streams.map(s => {
-    const rows = live(S.txs).filter(t => streamOf(t) === s.id);
+  $('#st-accounts').innerHTML = `<div class="rows">` + S.accounts.map(s => {
+    const rows = live(S.txs).filter(t => acctOf(t) === s.id);
     const i = rows.filter(t => flowOf(t.dept) === 'in').reduce((a, t) => a + ils(t), 0);
     const o = rows.filter(t => flowOf(t.dept) === 'out').reduce((a, t) => a + ils(t), 0);
-    return `<button class="row" data-stream="${s.id}">
+    return `<button class="row" data-acct="${s.id}">
       <span class="gl" style="background:transparent"><i class="swatch" style="background:${C.seriesVar(s.slot ?? 0)};width:11px;height:11px;margin:0"></i></span>
       <span class="body"><span class="t1">${esc(s.name)}</span>
-      <span class="t2">${STREAM_KIND_LABEL[s.kind] || ''} · ${rows.length} תנועות · נטו ${money(i - o)}</span></span>
+      <span class="t2">${ACCOUNT_TYPE_LABEL[s.type] || ''} · ${rows.length} תנועות · נטו ${money(i - o)}</span></span>
       <span class="amt" style="color:var(--ink-3)">${icon('chev', 14)}</span></button>`;
   }).join('') + '</div>';
 
@@ -1086,18 +1113,18 @@ async function renderSettings() {
 /* ==================== הוספה מהירה ==================== */
 
 const ADD = {
-  amount: '', dept: 'food', cat: 'general', method: 'cash', stream: 'household',
+  amount: '', dept: 'food', cat: 'general', method: 'cash', account: 'bank1',
   date: todayISO(), merchant: '', income: false, business: false, currency: 'ILS',
   editId: null, touched: false,
 };
 
 function openAdd(preset = {}) {
   Object.assign(ADD, {
-    amount: '', dept: 'food', cat: 'general', method: 'cash', stream: 'household',
+    amount: '', dept: 'food', cat: 'general', method: 'cash', account: 'bank1',
     date: todayISO(), merchant: '', income: false, business: false, currency: 'ILS',
     editId: null, touched: false,
   }, preset);
-  $('#add-title').textContent = ADD.editId ? 'עריכת תנועה' : (ADD.income ? 'הכנסה חדשה' : 'הוצאה חדשה');
+  
   $('#add-merch').value = ADD.merchant;
   $('#add-merch').placeholder = ADD.income ? 'ממי? (שם המשלם)' : 'על מה? (רשות)';
   $('#add-date').value = ADD.date;
@@ -1112,19 +1139,35 @@ function drawAdd() {
   v.classList.toggle('zero', !ADD.amount);
   $('#add-cur').textContent = ' ' + (CUR_SIGN[ADD.currency] || '₪');
 
-  const quick = ADD.income
-    ? dept('income').cats.map(c => ['income', c.key])
-    : QUICK_SEED;
+  $('#add-dir').innerHTML =
+    `<button class="${!ADD.income ? 'on' : ''}" data-dir="out">הוצאה</button>
+     <button class="${ADD.income ? 'on' : ''}" data-dir="in">הכנסה</button>`;
+
+  // הקטגוריות שאתה באמת משתמש בהן, לפי התדירות בפועל
+  let quick;
+  if (ADD.income) {
+    quick = dept('income').cats.slice(0, 6).map(c => ['income', c.key]);
+  } else {
+    const freq = {};
+    for (const t of live(S.txs)) {
+      if (flowOf(t.dept) !== 'out') continue;
+      freq[`${t.dept}/${t.cat}`] = (freq[`${t.dept}/${t.cat}`] || 0) + 1;
+    }
+    quick = [...new Set([
+      ...Object.entries(freq).sort((a, b) => b[1] - a[1]).map(e => e[0]),
+      ...QUICK_SEED.map(([d, c]) => `${d}/${c}`),
+    ])].filter(k => cat(...k.split('/'))).slice(0, 8).map(k => k.split('/'));
+  }
   $('#add-quick').innerHTML = quick.map(([d, c]) =>
     `<button class="chip ${ADD.dept === d && ADD.cat === c ? 'on' : ''}" data-setcat="${d}/${c}">${esc(catLabel(d, c))}</button>`).join('');
 
   $('#add-cat').textContent = pathLabel(ADD.dept, ADD.cat);
-  $('#add-stream').innerHTML = S.streams.map(s =>
-    `<option value="${esc(s.id)}" ${ADD.stream === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+  $('#add-merch').placeholder = ADD.income ? 'ממי? (רשות)' : 'על מה? (רשות)';
+  $('#add-account').innerHTML = S.accounts.filter(a => a.active !== false).map(s =>
+    `<option value="${esc(s.id)}" ${ADD.account === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
   $('#add-method').innerHTML = Object.entries(METHOD_LABEL).map(([k, l]) =>
     `<option value="${k}" ${ADD.method === k ? 'selected' : ''}>${l}</option>`).join('');
   $('#add-flags').innerHTML = `
-    <button class="chip ${ADD.income ? 'on' : ''}" data-flag="income">הכנסה</button>
     <button class="chip ${ADD.business ? 'on' : ''}" data-flag="business">עסקי</button>
     <button class="chip ${ADD.currency === 'USD' ? 'on' : ''}" data-flag="usd">דולר</button>`;
   $('#add-save').disabled = !toAgorot(ADD.amount);
@@ -1151,7 +1194,7 @@ async function saveAdd() {
     dateBuy: $('#add-date').value || todayISO(),
     merchant, amount, currency: ADD.currency, ils: toILS(amount, ADD.currency),
     dept: ADD.dept, cat: ADD.cat, method: $('#add-method').value,
-    stream: $('#add-stream').value,
+    account: $('#add-account').value,
     scope: ADD.business ? 'business' : undefined,
   });
   if (ADD.editId) {
@@ -1159,7 +1202,7 @@ async function saveAdd() {
     if (old) Object.assign(rec, { ts: old.ts, source: old.source, raw: old.raw, fixedId: old.fixedId, needsReview: false });
   }
   await DB.saveTx(rec);
-  if (merchant) await DB.learn(merchant, { dept: rec.dept, cat: rec.cat, kind: rec.kind, need: rec.need, scope: rec.scope, stream: rec.stream });
+  if (merchant) await DB.learn(merchant, { dept: rec.dept, cat: rec.cat, kind: rec.kind, need: rec.need, scope: rec.scope, account: rec.account });
   await reload();
   closeSheet('sh-add');
   toast(ADD.editId ? 'עודכן' : `נשמר ${money(rec.ils)}`);
@@ -1188,14 +1231,14 @@ function onCatPicked(dk, ck) {
     ADD.dept = dk; ADD.cat = ck; ADD.touched = true;
     ADD.income = flowOf(dk) === 'in';
     ADD.business = d.scope === 'business';
-    ADD.stream = d.stream;
-    $('#add-title').textContent = ADD.editId ? 'עריכת תנועה' : (ADD.income ? 'הכנסה חדשה' : 'הוצאה חדשה');
+    ADD.account = d.account;
+    
     drawAdd();
   } else if (typeof catTarget === 'number') {
     Object.assign(SHOT.items[catTarget], { dept: dk, cat: ck, ...d });
     drawItems();
   } else if (catTarget === 'fixed') {
-    FIXED.dept = dk; FIXED.cat = ck; FIXED.stream = d.stream;
+    FIXED.dept = dk; FIXED.cat = ck; FIXED.account = d.account;
     drawFixed();
   }
 }
@@ -1284,7 +1327,7 @@ function drawItems() {
         <input class="inp" placeholder="בית עסק" value="${esc(it.merchant)}" data-fld="merchant" data-i="${i}" style="margin-bottom:9px">
         <div class="pair">
           <div><label style="font-size:10px;color:var(--ink-3)">מקור</label>
-            <select class="inp" data-fld="stream" data-i="${i}">${S.streams.map(s => `<option value="${esc(s.id)}" ${it.stream === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
+            <select class="inp" data-fld="account" data-i="${i}">${S.accounts.map(s => `<option value="${esc(s.id)}" ${it.account === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
           <div><label style="font-size:10px;color:var(--ink-3)">אמצעי</label>
             <select class="inp" data-fld="method" data-i="${i}">${Object.entries(METHOD_LABEL).map(([k, l]) => `<option value="${k}" ${it.method === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         </div>
@@ -1337,7 +1380,7 @@ async function normalizeItem(r) {
     kind: rule?.kind || r.kind || d.kind,
     need: rule?.need || r.need || d.need,
     scope: rule?.scope || r.scope || d.scope,
-    stream: rule?.stream || d.stream,
+    account: rule?.account || d.account,
     method: r.method || 'credit',
     installmentN: inst?.n, installmentOf: inst?.of,
     confidence: typeof r.confidence === 'number' ? r.confidence : 0.8,
@@ -1352,14 +1395,14 @@ async function saveShot() {
     dateBuy: it.dateBuy, dateCharge: it.dateCharge, merchant: it.merchant,
     amount: it.amount, currency: it.currency, ils: toILS(it.amount, it.currency),
     dept: it.dept, cat: it.cat, kind: it.kind, need: it.need, scope: it.scope,
-    stream: it.stream, method: it.method,
+    account: it.account, method: it.method,
     installment: it.installmentOf > 1 ? { n: it.installmentN, of: it.installmentOf } : null,
     source: 'ocr', confidence: it.confidence, raw: it.raw,
     needsReview: (it.confidence ?? 1) < 0.7,
   }));
   await DB.saveTxMany(recs);
   for (const it of on) {
-    if (it.merchant) await DB.learn(it.merchant, { dept: it.dept, cat: it.cat, kind: it.kind, need: it.need, scope: it.scope, stream: it.stream });
+    if (it.merchant) await DB.learn(it.merchant, { dept: it.dept, cat: it.cat, kind: it.kind, need: it.need, scope: it.scope, account: it.account });
   }
   for (const id of SHOT.pendingIds) await DB.del('pending', id);
   await reload();
@@ -1388,7 +1431,7 @@ function openTx(id) {
         { cells: ['תאריך קנייה', t.dateBuy] },
         ...(t.dateCharge ? [{ cells: ['תאריך חיוב', t.dateCharge] }] : []),
         { cells: ['אמצעי', METHOD_LABEL[t.method] || '—'] },
-        { cells: ['מקור', esc(streamName(streamOf(t)))] },
+        { cells: ['מקור', esc(acctName(acctOf(t)))] },
         { cells: ['סוג', KIND_LABEL[t.kind]] },
         { cells: ['חיוניות', NEED_LABEL[t.need]] },
         { cells: ['היקף', t.scope === 'business' ? 'עסקי' : 'פרטי'] },
@@ -1416,7 +1459,7 @@ async function txAction(action, id) {
     closeSheet('sh-tx');
     openAdd({
       editId: t.id, amount: String(t.amount / 100), dept: t.dept, cat: t.cat,
-      method: t.method, date: t.dateBuy, merchant: t.merchant, stream: streamOf(t),
+      method: t.method, date: t.dateBuy, merchant: t.merchant, account: acctOf(t),
       income: flowOf(t.dept) === 'in', business: t.scope === 'business', currency: t.currency,
     });
     return;
@@ -1429,11 +1472,11 @@ async function txAction(action, id) {
 
 /* ==================== הוצאה קבועה ==================== */
 
-const FIXED = { id: null, merchant: '', amount: 0, dept: 'home', cat: 'rent', day: 1, method: 'bank', stream: 'household', active: true };
+const FIXED = { id: null, merchant: '', amount: 0, dept: 'home', cat: 'rent', day: 1, method: 'bank', account: 'bank1', active: true };
 
 function openFixed(id = null) {
   const f = id ? S.fixed.find(x => x.id === id) : null;
-  Object.assign(FIXED, { id: null, merchant: '', amount: 0, dept: 'home', cat: 'rent', day: 1, method: 'bank', stream: 'household', active: true }, f || {});
+  Object.assign(FIXED, { id: null, merchant: '', amount: 0, dept: 'home', cat: 'rent', day: 1, method: 'bank', account: 'bank1', active: true }, f || {});
   drawFixed();
   openSheet('sh-fixed');
 }
@@ -1448,7 +1491,7 @@ function drawFixed() {
     <div class="field"><label>קטגוריה</label>
       <button class="inp" data-fixedcat style="text-align:right">${esc(pathLabel(FIXED.dept, FIXED.cat))}</button></div>
     <div class="pair">
-      <div class="field"><label>מקור</label><select class="inp" id="f-stream">${S.streams.map(s => `<option value="${esc(s.id)}" ${FIXED.stream === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>חשבון</label><select class="inp" id="f-account">${S.accounts.map(s => `<option value="${esc(s.id)}" ${FIXED.account === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
       <div class="field"><label>אמצעי</label><select class="inp" id="f-method">${Object.entries(METHOD_LABEL).map(([k, l]) => `<option value="${k}" ${FIXED.method === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     </div>
     <div class="chipset" style="margin-bottom:14px"><button class="chip ${FIXED.active ? 'on' : ''}" data-factive>${FIXED.active ? 'פעיל' : 'כבוי'}</button></div>
@@ -1460,7 +1503,7 @@ async function saveFixed() {
   FIXED.merchant = $('#f-merch').value.trim();
   FIXED.amount = toAgorot($('#f-amt').value);
   FIXED.day = Math.min(31, Math.max(1, parseInt($('#f-day').value) || 1));
-  FIXED.stream = $('#f-stream').value;
+  FIXED.account = $('#f-account').value;
   FIXED.method = $('#f-method').value;
   if (!FIXED.merchant || !FIXED.amount) { toast('חסר שם או סכום'); return; }
   await DB.put('fixed', { ...FIXED, id: FIXED.id || DB.uid(), startMonth: FIXED.startMonth || curMonth() });
@@ -1471,30 +1514,30 @@ async function saveFixed() {
 
 /* ==================== מקורות ==================== */
 
-const STREAM = { id: null, name: '', kind: 'venture', slot: 0, active: true };
+const ACCT = { id: null, name: '', type: 'bank', slot: 0, active: true };
 
-function openStream(id = null) {
-  const s = id ? S.streams.find(x => x.id === id) : null;
-  Object.assign(STREAM, { id: null, name: '', kind: 'venture', slot: nextSlot(), active: true }, s || {});
-  drawStream();
-  openSheet('sh-stream');
+function openAccount(id = null) {
+  const s = id ? S.accounts.find(x => x.id === id) : null;
+  Object.assign(ACCT, { id: null, name: '', type: 'bank', slot: nextSlot(), active: true }, s || {});
+  drawAccount();
+  openSheet('sh-account');
 }
 const nextSlot = () => {
-  const used = new Set(S.streams.map(s => s.slot));
+  const used = new Set(S.accounts.map(s => s.slot));
   for (let i = 0; i < 8; i++) if (!used.has(i)) return i;
-  return S.streams.length % 8;
+  return S.accounts.length % 8;
 };
 
-function drawStream() {
-  const rows = live(S.txs).filter(t => streamOf(t) === STREAM.id);
+function drawAccount() {
+  const rows = live(S.txs).filter(t => acctOf(t) === ACCT.id);
   const i = rows.filter(t => flowOf(t.dept) === 'in').reduce((a, t) => a + ils(t), 0);
   const o = rows.filter(t => flowOf(t.dept) === 'out').reduce((a, t) => a + ils(t), 0);
-  $('#stream-body').innerHTML = `
-    <div class="field"><label>שם</label><input class="inp" id="s-name" value="${esc(STREAM.name)}" placeholder="נדל״ן / עסק צדדי"></div>
-    <div class="field"><label>סוג</label><select class="inp" id="s-kind">${Object.entries(STREAM_KIND_LABEL).map(([k, l]) => `<option value="${k}" ${STREAM.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+  $('#account-body').innerHTML = `
+    <div class="field"><label>שם</label><input class="inp" id="a-name" value="${esc(ACCT.name)}" placeholder="חשבון ג׳ / כרטיס נפרד"></div>
+    <div class="field"><label>סוג</label><select class="inp" id="a-type">${Object.entries(ACCOUNT_TYPE_LABEL).map(([k, l]) => `<option value="${k}" ${ACCT.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     <div class="field"><label>צבע</label><div class="chipset">${Array.from({ length: 8 }, (_, n) =>
-      `<button class="chip ${STREAM.slot === n ? 'on' : ''}" data-slot="${n}"><i class="swatch" style="background:${C.seriesVar(n)};margin:0"></i></button>`).join('')}</div></div>
-    ${STREAM.id ? `<div class="panel" style="margin-bottom:14px">${table(
+      `<button class="chip ${ACCT.slot === n ? 'on' : ''}" data-slot="${n}"><i class="swatch" style="background:${C.seriesVar(n)};margin:0"></i></button>`).join('')}</div></div>
+    ${ACCT.id ? `<div class="panel" style="margin-bottom:14px">${table(
       [{ label: 'מאז ומתמיד' }, { label: 'סכום', n: true }],
       [{ cells: ['נכנס', `<span class="num">${money(i)}</span>`] },
        { cells: ['יצא', `<span class="num">${money(o)}</span>`] },
@@ -1502,17 +1545,17 @@ function drawStream() {
        { cells: ['תנועות', `<span class="num">${rows.length}</span>`] }],
     )}</div>` : ''}
     <button class="btn accent" data-ssave>שמירה</button>
-    ${STREAM.id && !STREAM.builtin ? '<button class="btn danger" data-sdel style="margin-top:9px">מחיקה</button>' : ''}
-    ${STREAM.builtin ? '<div class="hint">מקור מובנה — אפשר לשנות שם וצבע, אי אפשר למחוק.</div>' : ''}`;
+    ${ACCT.id && !ACCT.builtin ? '<button class="btn danger" data-sdel style="margin-top:9px">מחיקה</button>' : ''}
+    ${ACCT.builtin ? '<div class="hint">חשבון מובנה — אפשר לשנות שם וצבע, אי אפשר למחוק.</div>' : ''}`;
 }
 
-async function saveStream() {
-  STREAM.name = $('#s-name').value.trim();
-  STREAM.kind = $('#s-kind').value;
-  if (!STREAM.name) { toast('חסר שם'); return; }
-  await DB.put('streams', { ...STREAM, id: STREAM.id || DB.uid() });
+async function saveAccount() {
+  ACCT.name = $('#a-name').value.trim();
+  ACCT.type = $('#a-type').value;
+  if (!ACCT.name) { toast('חסר שם'); return; }
+  await DB.put('accounts', { ...ACCT, id: ACCT.id || DB.uid() });
   await reload();
-  closeSheet('sh-stream'); toast('נשמר'); render();
+  closeSheet('sh-account'); toast('נשמר'); render();
 }
 
 /* ==================== גיבוי ==================== */
@@ -1605,7 +1648,7 @@ function doCsv() {
     'סכום מקורי', 'מטבע', 'שקלים', 'סוג', 'חיוניות', 'היקף', 'אמצעי', 'תשלומים', 'הערה', 'רישום', 'זרימה'];
   const rows = S.txs.map(t => [
     t.dateBuy, t.dateCharge || '', t.merchant, dept(t.dept)?.label || t.dept, catLabel(t.dept, t.cat),
-    pathLabel(t.dept, t.cat), streamName(streamOf(t)),
+    pathLabel(t.dept, t.cat), acctName(acctOf(t)),
     (t.amount / 100).toFixed(2), t.currency, (ils(t) / 100).toFixed(2),
     KIND_LABEL[t.kind], NEED_LABEL[t.need], t.scope === 'business' ? 'עסקי' : 'פרטי',
     METHOD_LABEL[t.method], t.installment ? `${t.installment.n}/${t.installment.of}` : '',
@@ -1632,8 +1675,30 @@ function wire() {
     if (hit('#go-settings')) { S.view = 'settings'; scrollTo(0, 0); render(); return; }
     if (hit('#go-budget')) { S.view = 'settings'; render(); return; }
     if (hit('#see-all')) { S.view = 'ledger'; render(); return; }
-    if (hit('#act-add') || hit('#act-add-2')) { openAdd(); return; }
+    if (hit('#act-cash')) { openAdd({ method: 'cash', account: 'cash' }); return; }
     if (hit('#act-shot')) { openShot(); return; }
+    if (hit('#add-more')) {
+      const box = $('#add-extra');
+      box.hidden = !box.hidden;
+      hit('#add-more').textContent = box.hidden ? 'אפשרויות נוספות' : 'פחות אפשרויות';
+      return;
+    }
+
+    // בורר חשבון בבית
+    const as = hit('[data-acctsel]');
+    if (as) { S.acctFilter = as.dataset.acctsel || null; renderHome(); return; }
+
+    // הוצאה מול הכנסה
+    const dir = hit('[data-dir]')?.dataset.dir;
+    if (dir) {
+      const wantIncome = dir === 'in';
+      if (wantIncome !== ADD.income) {
+        ADD.income = wantIncome;
+        ADD.dept = wantIncome ? 'income' : 'food';
+        ADD.cat = 'general';
+      }
+      drawAdd(); return;
+    }
 
     const act = hit('[data-act]')?.dataset.act;
     if (act === 'review') { S.view = 'ledger'; S.filter = 'review'; render(); return; }
@@ -1656,19 +1721,12 @@ function wire() {
     if (sc) {
       const [d, c] = sc.dataset.setcat.split('/');
       ADD.dept = d; ADD.cat = c; ADD.touched = true;
-      ADD.stream = defaultsFor(d, c).stream;
+      ADD.account = defaultsFor(d, c).account;
       drawAdd(); return;
     }
     if (hit('#add-cat')) { openCatPicker('add', `${ADD.dept}/${ADD.cat}`); return; }
     const fl = hit('[data-flag]')?.dataset.flag;
-    if (fl === 'income') {
-      ADD.income = !ADD.income;
-      ADD.dept = ADD.income ? 'income' : 'food'; ADD.cat = 'general';
-      ADD.stream = guessStream(ADD.dept, ADD.cat);
-      $('#add-title').textContent = ADD.income ? 'הכנסה חדשה' : 'הוצאה חדשה';
-      $('#add-merch').placeholder = ADD.income ? 'ממי? (שם המשלם)' : 'על מה? (רשות)';
-      drawAdd(); return;
-    }
+
     if (fl === 'business') { ADD.business = !ADD.business; drawAdd(); return; }
     if (fl === 'usd') { ADD.currency = ADD.currency === 'USD' ? 'ILS' : 'USD'; drawAdd(); return; }
     if (hit('#add-save')) { await saveAdd(); return; }
@@ -1701,14 +1759,14 @@ function wire() {
     if (f) {
       const v = f.dataset.f;
       if (v === 'cleardept') S.deptFilter = null;
-      else if (v === 'clearstream') S.streamFilter = null;
+      else if (v === 'clearacct') S.acctFilter = null;
       else S.filter = v;
       renderLedger(); return;
     }
     const dr = hit('[data-deptrow]');
-    if (dr) { S.deptFilter = dr.dataset.deptrow; S.streamFilter = null; S.filter = 'all'; S.q = ''; $('#q').value = ''; S.view = 'ledger'; scrollTo(0, 0); render(); return; }
-    const sr = hit('[data-streamrow]');
-    if (sr) { S.streamFilter = sr.dataset.streamrow; S.deptFilter = null; S.filter = 'all'; S.view = 'ledger'; scrollTo(0, 0); render(); return; }
+    if (dr) { S.deptFilter = dr.dataset.deptrow; S.acctFilter = null; S.filter = 'all'; S.q = ''; $('#q').value = ''; S.view = 'ledger'; scrollTo(0, 0); render(); return; }
+    const sr = hit('[data-acctrow]');
+    if (sr) { S.acctFilter = sr.dataset.acctrow; S.deptFilter = null; S.filter = 'all'; S.view = 'ledger'; scrollTo(0, 0); render(); return; }
 
     // מתגי גרף/טבלה
     const tgl = hit('[data-toggle] button');
@@ -1716,7 +1774,7 @@ function wire() {
       const group = tgl.closest('[data-toggle]').dataset.toggle;
       S.modes[group] = tgl.dataset.mode;
       $$('button', tgl.parentElement).forEach(b => b.classList.toggle('on', b === tgl));
-      ({ streams: () => renderStreams(statsFor(S.month)), depts: () => renderDepts(statsFor(S.month)), stack: renderStack, heat: () => renderHeat(statsFor(S.month), S.month) })[group]();
+      ({ accounts: () => renderAccounts(statsFor(S.month)), depts: () => renderDepts(statsFor(S.month)), stack: renderStack, heat: () => renderHeat(statsFor(S.month), S.month) })[group]();
       return;
     }
 
@@ -1733,17 +1791,17 @@ function wire() {
     if (hit('[data-fdel]')) { await DB.del('fixed', FIXED.id); await reload(); closeSheet('sh-fixed'); toast('נמחק'); render(); return; }
 
     // מקורות
-    const sm = hit('[data-stream]'); if (sm) { openStream(sm.dataset.stream); return; }
-    if (hit('#st-addstream')) { openStream(); return; }
-    const sl = hit('[data-slot]'); if (sl) { STREAM.slot = +sl.dataset.slot; drawStream(); return; }
-    if (hit('[data-ssave]')) { await saveStream(); return; }
+    const sm = hit('[data-acct]'); if (sm) { openAccount(sm.dataset.account); return; }
+    if (hit('#st-addaccount')) { openAccount(); return; }
+    const sl = hit('[data-slot]'); if (sl) { ACCT.slot = +sl.dataset.slot; drawAccount(); return; }
+    if (hit('[data-ssave]')) { await saveAccount(); return; }
     if (hit('[data-sdel]')) {
-      if (!confirm('למחוק את המקור? התנועות שלו יעברו ל"משק בית".')) return;
-      const moved = S.txs.filter(t => streamOf(t) === STREAM.id);
-      for (const t of moved) t.stream = 'household';
+      if (!confirm('למחוק את החשבון? התנועות שלו יעברו לחשבון הראשי.')) return;
+      const moved = S.txs.filter(t => acctOf(t) === ACCT.id);
+      for (const t of moved) t.account = 'bank1';
       if (moved.length) await DB.saveTxMany(moved);
-      await DB.del('streams', STREAM.id);
-      await reload(); closeSheet('sh-stream'); toast('נמחק'); render(); return;
+      await DB.del('accounts', ACCT.id);
+      await reload(); closeSheet('sh-account'); toast('נמחק'); render(); return;
     }
 
     // הגדרות
@@ -1778,8 +1836,8 @@ function wire() {
       if (!confirm('למחוק את כל התנועות, הכללים, המקורות וההוצאות הקבועות?')) return;
       if (!confirm('בטוח? ייווצר גיבוי מקומי אוטומטי שאפשר לשחזר ממנו.')) return;
       await DB.snapshot('לפני מחיקה מלאה');
-      await DB.clear('tx'); await DB.clear('rules'); await DB.clear('fixed'); await DB.clear('streams');
-      await ensureStreams(); await reload(); toast('נמחק — ניתן לשחזר'); render(); return;
+      await DB.clear('tx'); await DB.clear('rules'); await DB.clear('fixed'); await DB.clear('accounts');
+      await ensureAccounts(); await reload(); toast('נמחק — ניתן לשחזר'); render(); return;
     }
   });
 
@@ -1792,7 +1850,7 @@ function wire() {
       ADD.dept = rule.dept;
       ADD.cat = cat(rule.dept, rule.cat) ? rule.cat : 'general';
       ADD.business = rule.scope === 'business';
-      ADD.stream = rule.stream || defaultsFor(ADD.dept, ADD.cat).stream;
+      ADD.account = rule.account || defaultsFor(ADD.dept, ADD.cat).account;
       ADD.income = flowOf(ADD.dept) === 'in';
       drawAdd();
     }
@@ -1829,7 +1887,7 @@ function wire() {
       }
       await DB.snapshot('לפני ייבוא');
       const st = await DB.importAll(data);
-      await ensureStreams(); await reload();
+      await ensureAccounts(); await reload();
       toast(st.dropped ? `יובאו ${st.tx} תנועות · ${st.dropped} נדחו` : `יובאו ${st.tx} תנועות`, 3200);
       render();
     } catch (err) { toast('ייבוא נכשל: ' + err.message, 3500); }
