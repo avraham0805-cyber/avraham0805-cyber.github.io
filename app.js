@@ -85,7 +85,15 @@ const streamColor = (id) => {
 /* ==================== אתחול ==================== */
 
 async function init() {
-  await DB.open();
+  // אחסון שנכשל בשקט הוא התרחיש הגרוע ביותר: המשתמש מקליד שבוע שלם
+  // ורק אז מגלה ששום דבר לא נשמר. נכשלים ברעש, לפני שנוגעים בכלום.
+  try {
+    await DB.open();
+    await DB.setSetting('__probe', Date.now());
+  } catch (e) {
+    showStorageFailure(e);
+    return;
+  }
 
   // שכבת ההצפנה קודמת לכל דבר אחר — בלעדיה אין גישה לסודות
   const state = await Crypto.initCrypto(DB);
@@ -165,6 +173,26 @@ function armAutoLock() {
   ['pointerdown', 'keydown', 'visibilitychange'].forEach(ev =>
     document.addEventListener(ev, reset, { passive: true }));
   reset();
+}
+
+function showStorageFailure(err) {
+  document.body.innerHTML = `
+    <div style="max-width:520px;margin:0 auto;padding:60px 24px;font-family:system-ui,sans-serif;
+                background:#f9f9f7;color:#0b0b0b;min-height:100vh">
+      <h1 style="font-size:21px;font-weight:640;letter-spacing:-.02em;margin:0 0 14px">
+        אין אפשרות לשמור נתונים כאן</h1>
+      <p style="font-size:15px;line-height:1.6;color:#52514e;margin:0 0 16px">
+        הדפדפן חוסם אחסון מקומי בהקשר הזה, ולכן שום דבר שתקליד לא יישמר.
+        <b>לא אתן לך להתחיל להזין נתונים שייעלמו.</b>
+      </p>
+      <p style="font-size:15px;line-height:1.6;color:#52514e;margin:0 0 16px">
+        זה קורה כמעט תמיד כשפותחים את הקובץ ישירות מהאחסון בטלפון
+        (<code>file://</code>). הפתרון: פתח את האפליקציה מהכתובת שלה ברשת.
+        במחשב, פתיחת הקובץ בכרום עובדת כרגיל.
+      </p>
+      <p style="font-size:12.5px;color:#898781;margin-top:24px;direction:ltr;text-align:left">
+        ${esc(err?.name || '')}: ${esc(err?.message || String(err))}</p>
+    </div>`;
 }
 
 function showLock(err = '') {
