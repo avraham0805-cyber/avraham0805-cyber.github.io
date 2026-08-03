@@ -393,6 +393,55 @@ await t('קצב יומי מחשב נכון באמצע חודש', () => {
   assertEq(r.projected, 310000, '31 ימים ביולי');
 });
 
+await t('השלכה לא מתפוצצת כשקבועים נוחתים בתחילת החודש', () => {
+  const rows = [];
+  // שלושה חודשים היסטוריה: 5,400 קבוע + 2,000 משתנה
+  for (const m of ['2026-05', '2026-06', '2026-07']) {
+    rows.push(mk({ dateBuy: `${m}-01`, merchant: 'שכר דירה', dept: 'home', cat: 'rent', amount: 540000 }));
+    rows.push(mk({ dateBuy: `${m}-15`, merchant: 'סופר', amount: 200000 }));
+  }
+  // החודש הנוכחי: רק שכר הדירה נחת, ביום השני
+  rows.push(mk({ dateBuy: '2026-08-01', merchant: 'שכר דירה', dept: 'home', cat: 'rent', amount: 540000 }));
+  const rec = [{ merchant: 'שכר דירה', monthly: 540000, lastDate: '2026-08-01', dept: 'home', cat: 'rent' }];
+  const p = ST.projectMonth(rows, '2026-08', rec, new Date(2026, 7, 2));
+  assertEq(p.spentSoFar, 540000);
+  // השלכה לינארית הייתה נותנת 540000/2*31 ≈ 8.4 מיליון. הצפי חייב להישאר שפוי
+  assert(p.projected < 800000, 'הצפי התפוצץ: ' + p.projected);
+  assert(p.projected >= 540000, 'הצפי נמוך ממה שכבר יצא');
+});
+
+await t('השלכה לחודש שהסתיים שווה לסכום בפועל', () => {
+  const rows = [mk({ dateBuy: '2026-06-05', amount: 10000 }), mk({ dateBuy: '2026-06-20', amount: 20000 })];
+  const p = ST.projectMonth(rows, '2026-06', [], new Date(2026, 7, 2));
+  assertEq(p.projected, 30000);
+  assertEq(p.daysLeft, 0);
+});
+
+await t('חיובים צפויים כוללים קבועות ותשלומים', () => {
+  const rows = [mk({ dateBuy: '2026-08-01', merchant: 'KSP', dept: 'shopping', cat: 'electronics',
+                     amount: 49900, installment: { n: 3, of: 12 } })];
+  const fixed = [{ id: 'f1', merchant: 'שכר דירה', amount: 540000, day: 1, dept: 'home', cat: 'rent', active: true }];
+  const up = ST.upcoming(rows, [], fixed, 40, new Date(2026, 7, 2));
+  assert(up.items.some(i => i.label === 'שכר דירה'), 'הוצאה קבועה לא נכללה');
+  assert(up.items.some(i => i.label === 'KSP'), 'תשלום פתוח לא נכלל');
+  assertEq(up.total, 540000 + 49900);
+});
+
+await t('חיוב חוזר שנעצר לא נכלל בצפי', () => {
+  const rec = [{ merchant: 'מנוי ישן', monthly: 5000, lastDate: '2026-05-01', daysSince: 93, dept: 'subs', cat: 'general' }];
+  const up = ST.upcoming([], rec, [], 30, new Date(2026, 7, 2));
+  assertEq(up.items.length, 0);
+});
+
+await t('מצטבר יומי עולה ולא יורד', () => {
+  const rows = [mk({ dateBuy: '2026-07-02', amount: 10000 }), mk({ dateBuy: '2026-07-05', amount: 5000 })];
+  const c = ST.cumulativeDaily(rows, '2026-07');
+  assertEq(c[0], 0);
+  assertEq(c[1], 10000);
+  assertEq(c.at(-1), 15000);
+  for (let i = 1; i < c.length; i++) assert(c[i] >= c[i - 1], 'ירידה במצטבר');
+});
+
 await t('כפילויות לא נספרות בסטטיסטיקה', () => {
   const rows = [mk({ amount: 5000 }), mk({ amount: 5000, dupOf: 'x' })];
   assertEq(ST.runRate(rows, '2026-07', new Date(2026, 6, 31)).total, 5000);

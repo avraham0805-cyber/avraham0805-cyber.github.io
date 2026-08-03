@@ -233,6 +233,121 @@ export function baseline(txs, month, selector = () => true) {
   return { months: prev, values: vals, median: median(vals.filter(v => v > 0)) };
 }
 
+/* ==================== השלכה לסוף חודש ==================== */
+
+/**
+ * השלכה לינארית פשוטה שקרית בתחילת חודש: שכר דירה, ארנונה וביטוחים
+ * נוחתים ב-1 עד ה-5, ולכן ב-2 בחודש "קצב יומי כפול מספר הימים" מנפח
+ * אותם פי עשרות. במקום זה מפרידים בין מה שכבר ידוע לבין מה שמשתנה:
+ *
+ *   צפי = מה שכבר יצא + חיובים קבועים שעוד לא נחתו + קצב משתנה × ימים
+ *
+ * הקצב המשתנה נלמד מחציון החודשים הקודמים בניכוי הקבוע — לא מהחודש
+ * הנוכחי, שבתחילתו אין בו מספיק דגימות.
+ */
+export function projectMonth(txs, month, recurring = [], today = new Date()) {
+  const rows = spend(txs.filter(t => t.month === month));
+  const spentSoFar = sum(rows);
+  const dim = daysInMonth(month);
+  const isCurrent = month === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const day = isCurrent ? today.getDate() : dim;
+  const daysLeft = Math.max(0, dim - day);
+
+  if (!isCurrent) {
+    return { spentSoFar, projected: spentSoFar, daysLeft: 0, remainingFixed: 0, remainingVariable: 0, day, dim };
+  }
+
+  // קבועים שעוד לא נחתו החודש
+  const seen = new Set(rows.map(t => (t.merchant || '').trim()));
+  const remainingFixed = recurring
+    .filter(r => !seen.has((r.merchant || '').trim()))
+    .filter(r => +r.lastDate.slice(8) > day)
+    .reduce((s, r) => s + r.monthly, 0);
+
+  // קצב משתנה מהחודשים הקודמים
+  const fixedMonthly = recurring.reduce((s, r) => s + r.monthly, 0);
+  const prev = monthsRange(shiftMonth(month, -1), 3);
+  const prevTotals = prev.map(m => sum(spend(txs.filter(t => t.month === m)))).filter(v => v > 0);
+  const baseline = median(prevTotals);
+  const variableMonthly = Math.max(0, baseline - fixedMonthly);
+  const remainingVariable = Math.round(variableMonthly * (daysLeft / dim));
+
+  return {
+    spentSoFar, remainingFixed, remainingVariable,
+    projected: spentSoFar + remainingFixed + remainingVariable,
+    daysLeft, day, dim, baseline,
+    confident: prevTotals.length >= 2,
+  };
+}
+
+/* ==================== הוצאה מצטברת יומית ==================== */
+
+/** מערך מצטבר לפי יום בחודש — הבסיס לקו "אני מול עצמי בחודש שעבר" */
+export function cumulativeDaily(txs, month, capToday = false, today = new Date()) {
+  const dim = daysInMonth(month);
+  const isCurrent = month === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const last = capToday && isCurrent ? today.getDate() : dim;
+  const byDay = new Array(dim + 1).fill(0);
+  for (const t of spend(txs.filter(x => x.month === month))) {
+    const d = +t.dateBuy.slice(8);
+    if (d >= 1 && d <= dim) byDay[d] += ils(t);
+  }
+  const out = [];
+  let acc = 0;
+  for (let d = 1; d <= last; d++) { acc += byDay[d]; out.push(acc); }
+  return out;
+}
+
+/* ==================== מה עומד לרדת ==================== */
+
+/**
+ * חיובים צפויים ב-N הימים הקרובים: חיובים חוזרים שזוהו, הוצאות קבועות
+ * מוגדרות, ותשלומים פתוחים. זה ההבדל בין "כמה הוצאתי" ל"כמה כבר מחויב".
+ */
+export function upcoming(txs, recurring = [], fixed = [], days = 30, today = new Date()) {
+  const out = [];
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const end = new Date(start); end.setDate(end.getDate() + days);
+
+  const nextOccurrence = (dayOfMonth) => {
+    const d = new Date(start.getFullYear(), start.getMonth(), Math.min(dayOfMonth, 28));
+    if (d < start) d.setMonth(d.getMonth() + 1);
+    return d;
+  };
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  for (const f of fixed) {
+    if (f.active === false) continue;
+    const when = nextOccurrence(f.day || 1);
+    if (when <= end) out.push({ label: f.merchant, amount: f.amount, date: iso(when), kind: 'fixed', dept: f.dept, cat: f.cat });
+  }
+
+  const fixedNames = new Set(fixed.map(f => (f.merchant || '').trim()));
+  for (const r of recurring) {
+    if (fixedNames.has((r.merchant || '').trim())) continue;   // כבר נספר כהוצאה קבועה
+    if (r.daysSince > 45) continue;                            // כנראה בוטל
+    const day = +r.lastDate.slice(8);
+    const when = nextOccurrence(day);
+    if (when <= end) out.push({ label: r.merchant, amount: r.monthly, date: iso(when), kind: 'recurring', dept: r.dept, cat: r.cat });
+  }
+
+  for (const t of live(txs)) {
+    if (!t.installment || t.installment.of <= t.installment.n) continue;
+    if (flowOf(t.dept) !== 'out') continue;
+    const when = nextOccurrence(+t.dateBuy.slice(8));
+    if (when <= end) {
+      out.push({
+        label: t.merchant || catLabel(t.dept, t.cat), amount: ils(t), date: iso(when),
+        kind: 'installment', dept: t.dept, cat: t.cat,
+        note: `תשלום ${t.installment.n + 1} מתוך ${t.installment.of}`,
+      });
+    }
+  }
+
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return { items: out, total: out.reduce((s, x) => s + x.amount, 0), days };
+}
+
 /* ==================== סיכום לכותרת ==================== */
 
 export function headline(txs, month, budget, recurring = [], today = new Date()) {

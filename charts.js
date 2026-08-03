@@ -331,6 +331,156 @@ export function waterfall(steps, { height = 160, fmt = String } = {}) {
   return wrap;
 }
 
+/* ==================== סנקי — זרימת הכסף ==================== */
+
+/**
+ * הגרף המזוהה ביותר בתחום: מאיפה הכסף נכנס, לאן הוא יצא, ומה נשאר.
+ * שלוש עמודות — מקורות הכנסה, צומת מרכזי, ויעדי הוצאה.
+ * sources/targets: [{label, value, color}]
+ */
+export function sankey(sources, targets, { height = 300, fmt = String, hubLabel = 'נכנס' } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chartwrap';
+  const totalIn = sources.reduce((s, x) => s + x.value, 0);
+  const totalOut = targets.reduce((s, x) => s + x.value, 0);
+  if (!totalIn && !totalOut) return wrap;
+
+  const W = 100, H = height, PAD = 8;
+  const scale = Math.max(totalIn, totalOut) || 1;
+  const usable = H - PAD * 2;
+  const GAP = 3;                       // מרווח משטח בין רצועות
+  const colW = 13, hubW = 5;
+  const hubX = (W - hubW) / 2;
+
+  const svg = el('svg', {
+    class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none',
+    style: `height:${H}px`, role: 'img',
+  });
+
+  const lay = (items, total) => {
+    const n = items.filter(i => i.value > 0).length;
+    const room = usable - GAP * Math.max(0, n - 1);
+    let y = PAD;
+    return items.filter(i => i.value > 0).map(i => {
+      const h = Math.max(1.2, room * (i.value / (total || 1)));
+      const rec = { ...i, y, h };
+      y += h + GAP;
+      return rec;
+    });
+  };
+
+  const inRows = lay(sources, scale);
+  const outRows = lay(targets, scale);
+
+  // הצומת מתפרש על מלוא הגובה של הצד הגדול
+  const hubTop = PAD, hubH = usable;
+  svg.appendChild(el('rect', { x: hubX, y: hubTop, width: hubW, height: hubH, rx: 1, fill: 'var(--ink-3)' }));
+
+  // רצועות — עקומת בזייה בין הקצה לצומת
+  const ribbon = (x0, w0, y0, h0, x1, y1, h1, color) => {
+    const mid = (x0 + w0 + x1) / 2;
+    const d = `M${x0 + w0},${y0} C${mid},${y0} ${mid},${y1} ${x1},${y1}
+               L${x1},${y1 + h1} C${mid},${y1 + h1} ${mid},${y0 + h0} ${x0 + w0},${y0 + h0} Z`;
+    return el('path', { d, fill: color, 'fill-opacity': .34 });
+  };
+
+  // RTL: הכנסות מימין, הוצאות משמאל
+  let acc = hubTop;
+  for (const r of inRows) {
+    const share = hubH * (r.value / scale);
+    svg.appendChild(ribbon(W - colW, 0, r.y, r.h, hubX + hubW, acc, share, r.color));
+    svg.appendChild(el('rect', { x: W - colW, y: r.y, width: colW, height: r.h, rx: 1, fill: r.color }));
+    const hit = el('rect', { class: 'hit', x: W - colW, y: r.y, width: colW, height: r.h, tabindex: 0 });
+    bindTip(hit, `<div class="k">${r.label}</div><b>${fmt(r.value)}</b>`);
+    svg.appendChild(hit);
+    acc += share;
+  }
+
+  acc = hubTop;
+  for (const r of outRows) {
+    const share = hubH * (r.value / scale);
+    svg.appendChild(ribbon(hubX, 0, acc, share, colW, r.y, r.h, r.color));
+    svg.appendChild(el('rect', { x: 0, y: r.y, width: colW, height: r.h, rx: 1, fill: r.color }));
+    const hit = el('rect', { class: 'hit', x: 0, y: r.y, width: colW, height: r.h, tabindex: 0 });
+    bindTip(hit, `<div class="k">${r.label}</div><b>${fmt(r.value)}</b>`);
+    svg.appendChild(hit);
+    acc += share;
+  }
+  wrap.appendChild(svg);
+
+  // תוויות — מודפסות ב-HTML כדי שיישארו קריאות בכל רוחב
+  const legendRow = (rows, align) => rows.map(r =>
+    `<div style="display:flex;align-items:center;gap:6px;justify-content:${align};margin-bottom:3px">
+       <i class="swatch" style="background:${r.color};margin:0"></i>
+       <span style="font-size:11px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.label}</span>
+       <span class="num" style="font-size:11px;color:var(--ink-3)">${fmt(r.value)}</span>
+     </div>`).join('');
+
+  // סדר העמודות חייב להתאים לצדדים בגרף: בעברית הילד הראשון יושב מימין,
+  // ובגרף ההכנסות מצוירות מימין — לכן הן קודמות.
+  const labels = document.createElement('div');
+  labels.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px';
+  labels.innerHTML =
+    `<div><div style="font-size:10px;font-weight:660;letter-spacing:.08em;color:var(--ink-3);margin-bottom:6px">${hubLabel}</div>${legendRow(inRows, 'flex-start')}</div>` +
+    `<div><div style="font-size:10px;font-weight:660;letter-spacing:.08em;color:var(--ink-3);margin-bottom:6px">יצא</div>${legendRow(outRows, 'flex-start')}</div>`;
+  wrap.appendChild(labels);
+  return wrap;
+}
+
+/* ==================== קו מצטבר ==================== */
+
+/**
+ * ההוצאה המצטברת מתחילת החודש מול אותה נקודה בחודש הקודם.
+ * זה המבט היומי: האם אני מעל או מתחת לעצמי.
+ */
+export function cumulativeLine(current, previous, { height = 110, fmt = String, budget = 0 } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chartwrap';
+  const n = Math.max(current.length, previous.length);
+  if (!n) return wrap;
+  const max = Math.max(...current, ...previous, budget, 1);
+  const W = 100, H = height, padT = 6, padB = 4;
+  const plot = H - padT - padB;
+  const x = (i) => (i / Math.max(1, n - 1)) * W;
+  const y = (v) => padT + plot * (1 - v / max);
+
+  const svg = el('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', style: `height:${H}px` });
+
+  if (budget) {
+    svg.appendChild(el('line', {
+      class: 'grid', x1: 0, x2: W, y1: y(budget), y2: y(budget), vectorEffect: 'non-scaling-stroke',
+    }));
+  }
+
+  const path = (arr, color, width, opacity = 1) => {
+    if (arr.length < 2) return null;
+    return el('polyline', {
+      points: arr.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(' '),
+      fill: 'none', stroke: color, 'stroke-width': width, opacity,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round', vectorEffect: 'non-scaling-stroke',
+    });
+  };
+  const prev = path(previous, 'var(--ink-3)', 2, .5);
+  if (prev) svg.appendChild(prev);
+  const cur = path(current, 'var(--s1)', 2);
+  if (cur) svg.appendChild(cur);
+
+  if (current.length) {
+    svg.appendChild(el('circle', { cx: x(current.length - 1), cy: y(current.at(-1)), r: 2.4, fill: 'var(--s1)' }));
+  }
+
+  for (let i = 0; i < n; i++) {
+    const hit = el('rect', { class: 'hit', x: x(i) - W / n / 2, y: 0, width: W / n, height: H, tabindex: 0 });
+    const c = current[i], p = previous[i];
+    bindTip(hit, `<div class="k">יום ${i + 1}</div>` +
+      (c !== undefined ? `<b>${fmt(c)}</b>` : '') +
+      (p !== undefined ? `<div class="k">חודש קודם ${fmt(p)}</div>` : ''));
+    svg.appendChild(hit);
+  }
+  wrap.appendChild(svg);
+  return wrap;
+}
+
 /* ==================== מקרא ==================== */
 
 export function legend(keys) {

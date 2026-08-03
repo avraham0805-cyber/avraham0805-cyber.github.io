@@ -433,43 +433,46 @@ function renderAttribution() {
 }
 
 function renderPace() {
-  const r = ST.runRate(S.txs, S.month);
   const host = $('#an-pace');
-  if (!r.total) { host.innerHTML = '<div class="empty">אין תנועות בחודש זה</div>'; return; }
-  const base = ST.baseline(S.txs, S.month);
-  const vsBase = base.median ? (r.projected - base.median) / base.median : null;
+  S.insights ||= IN.analyze(S.txs);
+  const p = ST.projectMonth(S.txs, S.month, S.insights.recurring || []);
+  if (!p.spentSoFar) { host.innerHTML = '<div class="empty">אין תנועות בחודש זה</div>'; return; }
+  const isCurrent = p.daysLeft > 0 || p.day < p.dim;
+  const vsBase = p.baseline ? (p.projected - p.baseline) / p.baseline : null;
 
-  $('#an-pace-aside').innerHTML = r.isCurrent
-    ? `יום ${r.dayOfMonth} מתוך ${r.daysInMonth}`
-    : 'החודש הסתיים';
+  $('#an-pace-aside').innerHTML = isCurrent ? `יום ${p.day} מתוך ${p.dim}` : 'החודש הסתיים';
 
   const rows = [
-    ['הוצאה עד כה', money(r.total)],
-    ['קצב יומי', money(r.perDay)],
-    [r.isCurrent ? 'תחזית לסוף החודש' : 'סה״כ בפועל', `<b>${money(r.projected)}</b>`],
-    ['חציון 3 חודשים אחרונים', base.median ? money(base.median) : '—'],
+    ['יצא עד כה', money(p.spentSoFar)],
+    ...(isCurrent ? [
+      ['קבועים שעוד לא נחתו', p.remainingFixed ? money(p.remainingFixed) : '—'],
+      ['צפי משתנה לשארית החודש', money(p.remainingVariable)],
+      ['<b>צפי לסוף החודש</b>', `<b>${money(p.projected)}</b>`],
+    ] : [['סה״כ בפועל', `<b>${money(p.projected)}</b>`]]),
+    ['חציון 3 חודשים קודמים', p.baseline ? money(p.baseline) : '—'],
   ];
   if (S.budget) rows.push(['תקציב', money(S.budget)]);
 
   const verdict = !S.budget ? null
-    : r.projected > S.budget * 1.05 ? { t: 'חריגה צפויה', c: 'var(--neg)', d: `בקצב הזה תסיים ${money(r.projected - S.budget)} מעל התקציב` }
-    : r.projected < S.budget * 0.9 ? { t: 'מתחת לתקציב', c: 'var(--delta-up)', d: `בקצב הזה תסיים ${money(S.budget - r.projected)} מתחת לתקציב` }
-    : { t: 'בקצב', c: 'var(--ink-2)', d: 'התחזית קרובה לתקציב' };
+    : p.projected > S.budget * 1.05 ? { t: 'חריגה צפויה', c: 'var(--neg)', d: `בקצב הזה תסיים ${money(p.projected - S.budget)} מעל התקציב` }
+    : p.projected < S.budget * 0.9 ? { t: 'מתחת לתקציב', c: 'var(--delta-up)', d: `בקצב הזה תסיים ${money(S.budget - p.projected)} מתחת לתקציב` }
+    : { t: 'בקצב', c: 'var(--ink-2)', d: 'הצפי קרוב לתקציב' };
 
   host.innerHTML = `
     ${verdict ? `<div class="panel" style="margin-bottom:12px">
       <div style="font-size:15px;font-weight:620;color:${verdict.c}">${verdict.t}</div>
       <div class="hint" style="margin-top:3px">${verdict.d}</div>
       <div class="meter" style="margin-top:12px">
-        <i style="width:${Math.min(100, pct(r.total, S.budget))}%"></i>
-        ${r.projected > S.budget ? '' : `<i style="width:${Math.min(100 - pct(r.total, S.budget), Math.max(0, pct(r.projected - r.total, S.budget)))}%;background:var(--rule-2)"></i>`}
+        <i style="width:${Math.min(100, pct(p.spentSoFar, S.budget))}%"></i>
+        <i style="width:${Math.max(0, Math.min(100 - pct(p.spentSoFar, S.budget), pct(p.projected - p.spentSoFar, S.budget)))}%;background:var(--rule-2)"></i>
       </div>
       <div class="hint" style="display:flex;justify-content:space-between;margin-top:6px">
-        <span>בפועל ${money0(r.total)}</span><span>תחזית ${money0(r.projected)}</span></div>
+        <span>בפועל ${money0(p.spentSoFar)}</span><span>צפי ${money0(p.projected)}</span></div>
     </div>` : ''}
     ${table([{ label: 'מדד' }, { label: 'ערך', n: true }],
       rows.map(([k, v]) => ({ cells: [k, `<span class="num">${v}</span>`] })))}
-    ${vsBase !== null ? `<div class="hint">התחזית ${vsBase > 0 ? 'גבוהה' : 'נמוכה'} ב-${Math.abs(Math.round(vsBase * 100))}% מהחציון של שלושת החודשים הקודמים.</div>` : ''}`;
+    ${vsBase !== null && Math.abs(vsBase) < 3 ? `<div class="hint">הצפי ${vsBase > 0 ? 'גבוה' : 'נמוך'} ב-${Math.abs(Math.round(vsBase * 100))}% מחציון שלושת החודשים הקודמים.</div>` : ''}
+    ${p.confident === false ? '<div class="hint">אין עדיין מספיק היסטוריה — הצפי יתחדד אחרי חודשיים.</div>' : ''}`;
 }
 
 function renderVolatility() {
@@ -685,6 +688,41 @@ function renderHome() {
   }
   $('#home-alerts').innerHTML = alerts.join('');
 
+  // ---- קו מצטבר מול החודש הקודם ----
+  const cur = ST.cumulativeDaily(scoped, m, true);
+  const prevM = shiftMonth(m, -1);
+  const prv = ST.cumulativeDaily(scoped, prevM);
+  const lineHost = $('#home-line');
+  if (cur.length && prv.length) {
+    lineHost.replaceChildren(C.cumulativeLine(cur, prv, { fmt: money0, budget }));
+    const sameDay = prv[Math.min(cur.length, prv.length) - 1] || 0;
+    const diff = cur.at(-1) - sameDay;
+    $('#pace-aside').innerHTML = sameDay
+      ? `${diff > 0 ? 'מעל' : 'מתחת'} ב-<b>${money0(Math.abs(diff))}</b> ${delta(diff / sameDay)}`
+      : '';
+  } else {
+    lineHost.innerHTML = '<div class="empty">צריך חודש היסטוריה כדי להשוות קצב</div>';
+    $('#pace-aside').textContent = '';
+  }
+
+  // ---- מה עומד לרדת ----
+  S.insights ||= IN.analyze(S.txs);
+  const up = ST.upcoming(S.txs, S.insights.recurring || [], S.fixed, 30);
+  $('#upcoming-aside').innerHTML = up.total ? `<b>${money0(up.total)}</b>` : '';
+  $('#upcoming').innerHTML = up.items.length
+    ? `<div class="rows">${up.items.slice(0, 8).map(u => {
+        const d = dept(u.dept);
+        const when = new Date(u.date + 'T00:00:00');
+        const inDays = Math.max(0, Math.round((when - new Date().setHours(0, 0, 0, 0)) / 864e5));
+        return `<div class="row" style="cursor:default">
+          <span class="gl">${icon(d?.icon || 'repeat')}</span>
+          <span class="body"><span class="t1">${esc(u.label)}${u.note ? `<span class="pill">${esc(u.note)}</span>` : ''}</span>
+          <span class="t2">${inDays === 0 ? 'היום' : inDays === 1 ? 'מחר' : `בעוד ${inDays} ימים`} · ${u.date.slice(8)}.${u.date.slice(5, 7)}</span></span>
+          <span class="amt">${money(u.amount)}</span></div>`;
+      }).join('')}</div>` +
+      (up.items.length > 8 ? `<div class="hint">ועוד ${up.items.length - 8} חיובים</div>` : '')
+    : '<div class="empty">אין חיובים ידועים ב-30 הימים הקרובים</div>';
+
   const recent = scoped.slice(0, 8);
   $('#recent').innerHTML = recent.length
     ? `<div class="rows">${recent.map(txRow).join('')}</div>`
@@ -706,6 +744,8 @@ function renderAnalysis() {
     <div class="tile"><div class="k">יצא</div><div class="v">${money0(st.out)}</div><div class="d">${st.count} תנועות</div></div>
     <div class="tile"><div class="k">נכנס</div><div class="v pos">${money0(st.in)}</div><div class="d">${Object.values(st.byAccount).filter(s => s.in).length} מקורות</div></div>
     <div class="tile"><div class="k">נטו</div><div class="v ${st.net >= 0 ? 'pos' : 'neg'}">${st.net < 0 ? '−' : ''}${money0(st.net)}</div><div class="d">${st.in ? pct(st.net, st.in) + '% מההכנסה' : '—'}</div></div>`;
+
+  renderSankey(st);
 
   // מפל
   $('#an-waterfall').replaceChildren(st.in || st.out
@@ -764,6 +804,41 @@ function renderAnalysis() {
   ) : '<div class="empty">אין תשלומים פתוחים</div>';
 }
 
+function renderSankey(st) {
+  const host = $('#an-sankey');
+  const rows = live(S.txs.filter(t => t.month === S.month));
+
+  // מקורות הכנסה — גוון אחד מדורג, לא הפלטה הקטגורית.
+  // אחרת אותו כחול מסמן "משכורת" בצד אחד ו"דיור" בצד השני, ואותו צבע
+  // שמייצג שני דברים שונים באותו גרף הוא בדיוק מה שהופך אותו ללא-קריא.
+  const INCOME_RAMP = ['var(--q9)', 'var(--q7)', 'var(--q5)', 'var(--q4)', 'var(--q3)', 'var(--q2)'];
+  const inBy = {};
+  for (const t of rows) {
+    if (flowOf(t.dept) !== 'in') continue;
+    const k = catLabel(t.dept, t.cat);
+    inBy[k] = (inBy[k] || 0) + ils(t);
+  }
+  const sources = Object.entries(inBy).sort((a, b) => b[1] - a[1]).slice(0, 6)
+    .map(([label, value], i) => ({ label, value, color: INCOME_RAMP[i] || INCOME_RAMP.at(-1) }));
+
+  // יעדי הוצאה לפי מחלקה — עד 7 ואז "אחר", לעולם לא מחזור צבעים
+  const outBy = Object.entries(st.byDept).sort((a, b) => b[1] - a[1]);
+  const top = outBy.slice(0, 7);
+  const rest = outBy.slice(7).reduce((s, e) => s + e[1], 0);
+  const targets = top.map(([k, v], i) => ({ label: dept(k)?.label || k, value: v, color: C.seriesVar(i) }));
+  if (rest > 0) targets.push({ label: 'אחר', value: rest, color: C.OTHER_COLOR });
+
+  // מה שנשאר הוא יעד לכל דבר. בלעדיו הזרימה לא נסגרת, והצומת נשאר
+  // עם שטח ריק שנראה כמו באג במקום כמו חיסכון.
+  if (st.net > 0) targets.push({ label: 'נשאר', value: st.net, color: 'var(--good)' });
+
+  if (!sources.length && !targets.length) { host.replaceChildren(emptyEl()); return; }
+  $('#an-flow-aside').innerHTML = st.in
+    ? `נשמרו <b>${pct(Math.max(0, st.net), st.in)}%</b> מההכנסה`
+    : '';
+  host.replaceChildren(C.sankey(sources, targets, { fmt: money0, hubLabel: 'נכנס' }));
+}
+
 const emptyEl = () => {
   const d = document.createElement('div');
   d.className = 'empty';
@@ -780,7 +855,7 @@ function renderAccounts(st) {
 
   if (!rows.length) { host.replaceChildren(emptyEl()); return; }
 
-  if (S.modeS.accounts === 'table') {
+  if (S.modes.accounts === 'table') {
     host.innerHTML = table(
       [{ label: 'מקור' }, { label: 'נכנס', n: true }, { label: 'יצא', n: true }, { label: 'נטו', n: true }, { label: 'יחס', n: true }],
       rows.map(r => ({
