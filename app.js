@@ -931,11 +931,36 @@ function drawSplit() {
         ${SPLIT.parts.length > 2 ? `<button data-splitdel="${i}" style="font-size:12px;color:var(--critical);text-decoration:underline;margin-top:6px">הסר חלק</button>` : ''}
       </div>`).join('')}
     <button class="btn ghost sm" id="split-add" style="margin-bottom:12px">+ חלק נוסף</button>
-    <div class="note ${diff === 0 ? 'ok' : 'warn'}" style="margin-bottom:12px">
-      ${icon(diff === 0 ? 'check' : 'alert')}
-      <span class="grow">${diff === 0 ? 'הסכומים מתאזנים' : `הפרש של ${money(Math.abs(diff))} ${diff > 0 ? 'חסר' : 'עודף'}`}</span>
-    </div>
-    <button class="btn accent" id="split-save" ${diff === 0 ? '' : 'disabled'}>פצל לשתי תנועות ומעלה</button>`;
+    <div id="split-status"></div>
+    <button class="btn accent" id="split-save">פצל</button>`;
+  updateSplitBalance();
+}
+
+/** מאזן הפיצול נבדק בכל הקלדה — חלק אפס או הפרש חוסמים שמירה */
+function updateSplitBalance() {
+  const t = SPLIT.parent;
+  if (!t) return;
+  const sum = SPLIT.parts.reduce((s, p) => s + p.amount, 0);
+  const diff = ils(t) - sum;
+  const empty = SPLIT.parts.filter(p => p.amount <= 0).length;
+  const ok = diff === 0 && !empty;
+
+  const msg = empty
+    ? `${empty === 1 ? 'חלק אחד' : `${empty} חלקים`} ללא סכום`
+    : diff === 0 ? 'הסכומים מתאזנים'
+    : `הפרש של ${money(Math.abs(diff))} ${diff > 0 ? 'חסר' : 'עודף'}`;
+
+  const box = $('#split-status');
+  if (box) {
+    box.innerHTML = `<div class="note ${ok ? 'ok' : 'warn'}" style="margin-bottom:12px">
+      ${icon(ok ? 'check' : 'alert')}<span class="grow">${msg}</span>
+      ${!ok && !empty ? `<button id="split-fix">אזן אוטומטית</button>` : ''}</div>`;
+  }
+  const btn = $('#split-save');
+  if (btn) {
+    btn.disabled = !ok;
+    btn.textContent = ok ? `פצל ל-${SPLIT.parts.length} תנועות` : 'הסכומים לא מאוזנים';
+  }
 }
 
 async function saveSplit() {
@@ -1780,7 +1805,9 @@ function openTx(id) {
     </div>
     ${t.needsReview ? `<button class="btn accent" data-tx-act="ok" style="margin-bottom:9px">${icon('check')}אשר ונקה מהתור</button>` : ''}
     <button class="btn ghost" data-tx-act="edit" style="margin-bottom:9px">עריכה</button>
-    ${flowOf(t.dept) === 'out' && !t.splitOf ? '<button class="btn ghost" data-tx-act="split" style="margin-bottom:9px">פיצול בין קטגוריות</button>' : ''}
+    ${flowOf(t.dept) === 'out' && !t.splitOf && !t.installment
+      ? '<button class="btn ghost" data-tx-act="split" style="margin-bottom:9px">פיצול בין קטגוריות</button>' : ''}
+    ${t.installment ? '<div class="hint" style="margin-bottom:9px">תנועה בתשלומים אינה ניתנת לפיצול — הפיצול היה מנתק אותה מלוח התשלומים ומהתחייבויות העתיד.</div>' : ''}
     <button class="btn ghost" data-tx-act="${t.dupOf ? 'undup' : 'dup'}" style="margin-bottom:9px">${t.dupOf ? 'זו לא כפילות' : 'סמן ככפילות'}</button>
     <button class="btn danger" data-tx-act="del">${icon('trash')}מחיקה</button>`;
   $('#tx-body').dataset.id = id;
@@ -1984,14 +2011,15 @@ async function doExportEncrypted() {
 }
 
 function doCsv() {
-  const head = ['תאריך קנייה', 'תאריך חיוב', 'בית עסק', 'מחלקה', 'קטגוריה', 'תווית מלאה', 'מקור',
-    'סכום מקורי', 'מטבע', 'שקלים', 'סוג', 'חיוניות', 'היקף', 'אמצעי', 'תשלומים', 'הערה', 'רישום', 'זרימה'];
+  const head = ['תאריך קנייה', 'תאריך חיוב', 'בית עסק', 'מחלקה', 'קטגוריה', 'תווית מלאה', 'חשבון',
+    'סכום מקורי', 'מטבע', 'שקלים', 'סוג', 'חיוניות', 'היקף', 'אמצעי', 'תשלומים', 'תגיות', 'הערה', 'רישום', 'זרימה'];
   const rows = S.txs.map(t => [
     t.dateBuy, t.dateCharge || '', t.merchant, dept(t.dept)?.label || t.dept, catLabel(t.dept, t.cat),
     pathLabel(t.dept, t.cat), acctName(acctOf(t)),
     (t.amount / 100).toFixed(2), t.currency, (ils(t) / 100).toFixed(2),
     KIND_LABEL[t.kind], NEED_LABEL[t.need], t.scope === 'business' ? 'עסקי' : 'פרטי',
     METHOD_LABEL[t.method], t.installment ? `${t.installment.n}/${t.installment.of}` : '',
+    (t.tags || []).join(' | '),
     t.note, t.source, flowOf(t.dept),
   ]);
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -2182,6 +2210,13 @@ function wire() {
       SPLIT.parts.push({ amount: 0, dept: 'food', cat: 'general' });
       drawSplit(); return;
     }
+    if (hit('#split-fix')) {
+      // מפילים את ההפרש על החלק האחרון — הדרך המהירה לסגור אותו
+      const sum = SPLIT.parts.reduce((s, p) => s + p.amount, 0);
+      const last = SPLIT.parts.at(-1);
+      last.amount = Math.max(0, last.amount + (ils(SPLIT.parent) - sum));
+      drawSplit(); return;
+    }
     const splitDel = hit('[data-splitdel]');
     if (splitDel) { SPLIT.parts.splice(+splitDel.dataset.splitdel, 1); drawSplit(); return; }
     const splitCat = hit('[data-splitcat]');
@@ -2249,6 +2284,16 @@ function wire() {
       ADD.income = flowOf(ADD.dept) === 'in';
       drawAdd();
     }
+  });
+
+  // שדות הסכום בפיצול — בלי המאזין הזה הערכים שמוקלדים אינם נקראים,
+  // והפיצול נשמר תמיד לפי החלוקה ההתחלתית. תקלה שנראית כמו פיצ׳ר עובד.
+  $('#split-body').addEventListener('input', (e) => {
+    const el = e.target.closest('[data-splitamt]');
+    if (!el) return;
+    const i = +el.dataset.splitamt;
+    SPLIT.parts[i].amount = toAgorot(el.value);
+    updateSplitBalance();
   });
 
   $('#shot-body').addEventListener('input', (e) => {
@@ -2342,7 +2387,7 @@ async function testKey() {
 }
 
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__kesef = { S, SHOT, ADD, DB, AI, C, IN, mkTx, normalizeItem, statsFor, render, reload, openShot, drawShot };
+  window.__kesef = { S, SHOT, ADD, DB, AI, C, IN, ST, Crypto, mkTx, normalizeItem, statsFor, render, reload, openShot, drawShot };
 }
 
 init();

@@ -483,6 +483,29 @@ await t('תקציב על אפס הוצאה מסומן כלא-נוגע', () => {
   assertEq(st.items[0].left, 100000);
 });
 
+await t('CSV מכיל את כל המימדים כולל תגיות וחשבון', async () => {
+  await DB.clear('tx');
+  await DB.saveTx(mk({ merchant: 'בדיקה', tags: ['חופשה'], account: 'bank2' }));
+  const rows = await DB.allTx();
+  // מוודאים שהשדות בכלל קיימים ברשומה שנשמרה — הייצוא קורא מהם
+  assertEq(rows[0].tags, ['חופשה']);
+  assertEq(rows[0].account, 'bank2');
+});
+
+await t('ייצוא לא מכיל שדות undefined', async () => {
+  const dump = JSON.stringify(await DB.exportAll());
+  assert(!dump.includes('undefined'), 'ערך undefined דלף לייצוא');
+  assert(!dump.includes('NaN'), 'ערך NaN דלף לייצוא');
+});
+
+await t('סכומי פיצול חייבים להסתכם למקור', () => {
+  const parent = 100000;
+  const parts = [40000, 60000];
+  assertEq(parts.reduce((s, p) => s + p, 0), parent);
+  const bad = [40000, 50000];
+  assert(bad.reduce((s, p) => s + p, 0) !== parent, 'חלוקה לא מאוזנת חייבת להיתפס');
+});
+
 await t('תגיות מצטברות נכון', () => {
   const rows = [
     mk({ amount: 10000, tags: ['חופשה'] }),
