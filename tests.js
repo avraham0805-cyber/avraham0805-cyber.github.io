@@ -45,7 +45,7 @@ const mk = (o = {}) => ({
   merchant: o.merchant ?? 'עסק', amount: o.amount ?? 10000, ils: o.ils ?? o.amount ?? 10000,
   currency: 'ILS', dept: o.dept || 'food', cat: o.cat || 'super',
   kind: o.kind || 'variable', need: o.need || 'essential', scope: 'personal',
-  account: o.account || 'bank1', method: o.method || 'credit',
+  account: o.account || 'bank1', method: o.method || 'credit', tags: o.tags || [],
   installment: o.installment || null, note: '', source: 'manual', confidence: 1,
   needsReview: false, dupOf: o.dupOf || null, raw: '', fixedId: null,
   month: (o.dateBuy || '2026-07-15').slice(0, 7),
@@ -431,6 +431,77 @@ await t('חיוב חוזר שנעצר לא נכלל בצפי', () => {
   const rec = [{ merchant: 'מנוי ישן', monthly: 5000, lastDate: '2026-05-01', daysSince: 93, dept: 'subs', cat: 'general' }];
   const up = ST.upcoming([], rec, [], 30, new Date(2026, 7, 2));
   assertEq(up.items.length, 0);
+});
+
+await t('יתרה זזה לפי תנועות מאז העוגן', () => {
+  const accts = [{ id: 'bank1', name: 'ראשי', slot: 0, balance: 1000000, balanceDate: '2026-08-01' }];
+  const rows = [
+    mk({ dateBuy: '2026-07-20', amount: 50000, account: 'bank1' }),   // לפני העוגן — לא נספר
+    mk({ dateBuy: '2026-08-01', amount: 30000, account: 'bank1' }),   // ביום העוגן — כן נספר
+    mk({ dateBuy: '2026-08-03', amount: 20000, account: 'bank1' }),
+    mk({ dateBuy: '2026-08-03', amount: 70000, account: 'bank1', dept: 'income', cat: 'salary' }),
+  ];
+  const b = ST.balances(rows, accts, new Date(2026, 7, 4));
+  const a = b.accounts[0];
+  assertEq(a.outflow, 50000, 'הוצאות מאז העוגן');
+  assertEq(a.inflow, 70000);
+  assertEq(a.current, 1000000 - 50000 + 70000);
+  assertEq(b.netWorth, a.current);
+});
+
+await t('חשבון בלי עוגן לא נספר בשווי הנקי', () => {
+  const accts = [
+    { id: 'a', name: 'א', slot: 0, balance: 500000, balanceDate: '2026-08-01' },
+    { id: 'b', name: 'ב', slot: 1 },
+  ];
+  const b = ST.balances([], accts, new Date(2026, 7, 4));
+  assertEq(b.netWorth, 500000);
+  assertEq(b.covered, 1);
+  assertEq(b.complete, false);
+  assertEq(b.accounts[1].current, null);
+});
+
+await t('תקציב מזהה חריגה ומקדים', () => {
+  const rows = [
+    mk({ dateBuy: '2026-08-02', dept: 'food', amount: 300000 }),
+    mk({ dateBuy: '2026-08-02', dept: 'transport', cat: 'fuel', amount: 30000 }),
+  ];
+  const budgets = [{ key: 'food', amount: 250000 }, { key: 'transport', amount: 200000 }];
+  // ב-2 באוגוסט עבר רק כ-6% מהחודש
+  const st = ST.budgetStatus(rows, budgets, '2026-08', new Date(2026, 7, 2));
+  const food = st.items.find(i => i.key === 'food');
+  const tr = st.items.find(i => i.key === 'transport');
+  assertEq(food.state, 'over', 'מזון חייב להיות בחריגה');
+  assertEq(food.left, -50000);
+  assertEq(tr.state, 'ahead', 'תחבורה מקדימה את הקצב');
+  assertEq(st.over, 1);
+});
+
+await t('תקציב על אפס הוצאה מסומן כלא-נוגע', () => {
+  const st = ST.budgetStatus([], [{ key: 'leisure', amount: 100000 }], '2026-08', new Date(2026, 7, 15));
+  assertEq(st.items[0].state, 'unused');
+  assertEq(st.items[0].left, 100000);
+});
+
+await t('תגיות מצטברות נכון', () => {
+  const rows = [
+    mk({ amount: 10000, tags: ['חופשה'] }),
+    mk({ amount: 25000, tags: ['חופשה', 'טיסות'] }),
+    mk({ amount: 5000 }),
+  ];
+  const tt = ST.tagTotals(rows);
+  assertEq(tt.find(x => x.tag === 'חופשה').total, 35000);
+  assertEq(tt.find(x => x.tag === 'חופשה').count, 2);
+  assertEq(ST.allTags(rows), ['חופשה', 'טיסות']);
+});
+
+await t('תגיות עוברות סבב ייצוא-ייבוא', async () => {
+  await DB.clear('tx');
+  await DB.saveTx(mk({ id: 'tg1', tags: ['שיפוץ', 'דחוף'] }));
+  const dump = JSON.parse(JSON.stringify(await DB.exportAll()));
+  await DB.clear('tx');
+  await DB.importAll(dump, { merge: false });
+  assertEq((await DB.allTx())[0].tags, ['שיפוץ', 'דחוף']);
 });
 
 await t('מצטבר יומי עולה ולא יורד', () => {

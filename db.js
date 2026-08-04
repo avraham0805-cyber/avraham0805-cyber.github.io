@@ -4,7 +4,7 @@
 import * as Crypto from './crypto.js';
 
 const DB_NAME = 'kesef';
-const DB_VER = 4;
+const DB_VER = 5;
 
 /** @type {IDBDatabase|null} */
 let _db = null;
@@ -43,6 +43,10 @@ export function open() {
       if (!db.objectStoreNames.contains('accounts')) {
         // חשבונות — הציר שמאפשר לראות כל בנק לחוד ואת שניהם יחד
         db.createObjectStore('accounts', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('budgets')) {
+        // תקציב לכל מחלקה או קטגוריה. keyPath = "dept" או "dept/cat"
+        db.createObjectStore('budgets', { keyPath: 'key' });
       }
       // גרסאות מוקדמות קראו לזה streams. משאירים את המחסן הישן קיים
       // כדי שהשדרוג לא ייכשל, אבל אין אליו יותר כתיבה.
@@ -252,18 +256,19 @@ export function findDuplicate(rec, existing) {
 /* ---------- ייצוא / ייבוא ---------- */
 
 export async function exportAll() {
-  const [txs, rules, fixed, meta, accounts] = await Promise.all([
-    all('tx'), all('rules'), all('fixed'), all('meta'), all('accounts'),
+  const [txs, rules, fixed, meta, accounts, budgets] = await Promise.all([
+    all('tx'), all('rules'), all('fixed'), all('meta'), all('accounts'), all('budgets'),
   ]);
   return {
     app: 'kesef',
-    version: 4,
+    version: 5,
     exportedAt: new Date().toISOString(),
-    counts: { tx: txs.length, rules: rules.length, fixed: fixed.length, accounts: accounts.length },
+    counts: { tx: txs.length, rules: rules.length, fixed: fixed.length, accounts: accounts.length, budgets: budgets.length },
     tx: txs,
     rules,
     fixed,
     accounts,
+    budgets,
     // מפתחות API וחומר הצפנה לעולם לא עוזבים את המכשיר
     meta: meta.filter(m => !NEVER_EXPORT.has(m.k)),
   };
@@ -340,7 +345,9 @@ function cleanTx(r) {
     account: STR(r.account || r.stream, 64) || 'bank1',   // stream = השם הישן
     method: ONE_OF(r.method, ['cash', 'credit', 'bank', 'bit', 'other'], 'cash'),
     installment: inst,
-    note: STR(r.note, 200), source: ONE_OF(r.source, ['manual', 'ocr', 'recurring'], 'manual'),
+    tags: Array.isArray(r.tags) ? r.tags.slice(0, 8).map(t => STR(t, 32)).filter(Boolean) : [],
+    splitOf: STR(r.splitOf, 64) || null,
+    note: STR(r.note, 200), source: ONE_OF(r.source, ['manual', 'ocr', 'recurring', 'split'], 'manual'),
     confidence: Math.max(0, Math.min(1, Number(r.confidence) || 1)),
     needsReview: r.needsReview === true,
     dupOf: STR(r.dupOf, 64) || null,
@@ -372,6 +379,12 @@ const cleanAccount = (s) => (s && typeof s === 'object' && s.id ? {
   type: ONE_OF(s.type, ['bank', 'cash', 'card', 'other'], 'bank'),
   slot: Math.max(0, Math.min(7, NUM(s.slot))), active: s.active !== false,
   builtin: s.builtin === true,
+  // יתרה ידנית + התאריך שאליו היא נכונה. משם והלאה מחשבים לפי התנועות.
+  balance: NUM(s.balance), balanceDate: ISO_DATE(s.balanceDate),
+} : null);
+
+const cleanBudget = (b) => (b && typeof b === 'object' && b.key ? {
+  key: STR(b.key, 60), amount: Math.max(0, NUM(b.amount)),
 } : null);
 
 const cleanMeta = (m) => (m && typeof m.k === 'string' && !NEVER_EXPORT.has(m.k)
@@ -388,16 +401,24 @@ export async function importAll(data, { merge = true } = {}) {
   const rules = take(data.rules, cleanRule);
   const fixed = take(data.fixed, cleanFixed);
   const accounts = take(data.accounts || data.streams, cleanAccount);
+  const budgets = take(data.budgets, cleanBudget);
   const meta = take(data.meta, cleanMeta);
 
   const dropped = (Array.isArray(data.tx) ? data.tx.length : 0) - tx.length;
 
-  if (!merge) { await clear('tx'); await clear('rules'); await clear('fixed'); await clear('accounts'); }
+  if (!merge) {
+    await clear('tx'); await clear('rules'); await clear('fixed');
+    await clear('accounts'); await clear('budgets');
+  }
   if (tx.length) await putMany('tx', tx);
   if (rules.length) await putMany('rules', rules);
   if (fixed.length) await putMany('fixed', fixed);
   if (accounts.length) await putMany('accounts', accounts);
+  if (budgets.length) await putMany('budgets', budgets);
   for (const m of meta) await put('meta', m);
 
-  return { tx: tx.length, rules: rules.length, fixed: fixed.length, accounts: accounts.length, dropped };
+  return {
+    tx: tx.length, rules: rules.length, fixed: fixed.length,
+    accounts: accounts.length, budgets: budgets.length, dropped,
+  };
 }

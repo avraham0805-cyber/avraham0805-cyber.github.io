@@ -64,7 +64,7 @@ const closeAll = () => { $$('.sheet.on').forEach(s => s.classList.remove('on'));
 /* ==================== מצב ==================== */
 
 const S = {
-  txs: [], rules: [], fixed: [], accounts: [],
+  txs: [], rules: [], fixed: [], accounts: [], budgets: [],
   budget: 0, fx: { USD: 3.7, EUR: 4.0, GBP: 4.7 },
   month: curMonth(), view: 'home',
   q: '', filter: 'all', deptFilter: null, acctFilter: null,
@@ -131,8 +131,8 @@ async function init() {
 }
 
 async function reload() {
-  [S.txs, S.rules, S.fixed, S.accounts] = await Promise.all([
-    DB.allTx(), DB.all('rules'), DB.all('fixed'), DB.all('accounts'),
+  [S.txs, S.rules, S.fixed, S.accounts, S.budgets] = await Promise.all([
+    DB.allTx(), DB.all('rules'), DB.all('fixed'), DB.all('accounts'), DB.all('budgets'),
   ]);
   S.accounts.sort((a, b) => (a.slot ?? 9) - (b.slot ?? 9));
   S.analysis = null; S.insights = null;
@@ -253,6 +253,8 @@ function mkTx(p) {
     account: p.account || d.account,
     method: p.method || 'cash',
     installment: p.installment || null,
+    tags: Array.isArray(p.tags) ? p.tags.slice(0, 8) : [],
+    splitOf: p.splitOf || null,
     note: p.note || '', source: p.source || 'manual',
     confidence: p.confidence ?? 1, needsReview: !!p.needsReview,
     dupOf: p.dupOf || null, raw: p.raw || '', fixedId: p.fixedId || null,
@@ -338,6 +340,8 @@ function txRow(t) {
     t.dupOf ? '<span class="pill dup">כפילות</span>' : '',
     t.needsReview ? '<span class="pill warn">לאישור</span>' : '',
     t.currency !== 'ILS' ? `<span class="pill">${CUR_SIGN[t.currency]}${(t.amount / 100).toLocaleString('he-IL')}</span>` : '',
+    ...(t.tags || []).slice(0, 2).map(x => `<span class="pill acc">#${esc(x)}</span>`),
+    t.splitOf ? '<span class="pill">מפוצל</span>' : '',
   ].join('');
   const acctTag = S.accounts.length > 1 ? ` · ${esc(acctName(acctOf(t)))}` : '';
   return `<button class="row" data-tx="${t.id}">
@@ -688,6 +692,9 @@ function renderHome() {
   }
   $('#home-alerts').innerHTML = alerts.join('');
 
+  renderBalances();
+  renderBudgets();
+
   // ---- קו מצטבר מול החודש הקודם ----
   const cur = ST.cumulativeDaily(scoped, m, true);
   const prevM = shiftMonth(m, -1);
@@ -727,6 +734,244 @@ function renderHome() {
   $('#recent').innerHTML = recent.length
     ? `<div class="rows">${recent.map(txRow).join('')}</div>`
     : '<div class="empty">אין עדיין תנועות.<br>צלם דף אשראי או הוסף מזומן.</div>';
+}
+
+/* ==================== יתרות ==================== */
+
+function renderBalances() {
+  const host = $('#balances');
+  const b = ST.balances(S.txs, S.accounts.filter(a => a.active !== false));
+  if (!b.covered) {
+    host.innerHTML = `<div class="empty">האפליקציה יודעת כמה נכנס ויצא, אבל לא כמה יש לך.<br>
+      הזן יתרה אחת לכל חשבון — משם היא מתעדכנת לבד מכל תנועה.
+      <div style="margin-top:14px"><button class="btn accent sm" id="set-balances">הזנת יתרות</button></div></div>`;
+    return;
+  }
+  const stale = b.oldestAnchor
+    ? Math.floor((Date.now() - new Date(b.oldestAnchor + 'T00:00:00')) / 864e5) : 0;
+
+  host.innerHTML = `
+    <div class="panel" style="margin-bottom:10px">
+      <div style="font-size:11px;font-weight:660;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)">
+        ${b.complete ? 'סך הכל בחשבונות' : `סך ${b.covered} מתוך ${b.total} חשבונות`}</div>
+      <div style="font-size:32px;font-weight:660;letter-spacing:-.03em;margin-top:4px" class="prop">${money(b.netWorth)}</div>
+      ${stale > 45 ? `<div class="hint" style="color:var(--warn)">היתרה מעוגנת לפני ${stale} ימים — שווה לרענן מול הבנק.</div>` : ''}
+    </div>
+    ${table(
+      [{ label: 'חשבון' }, { label: 'עוגן', n: true }, { label: 'תנועה מאז', n: true }, { label: 'יתרה', n: true }],
+      b.accounts.map(a => ({
+        cells: [
+          `<i class="swatch" style="background:${C.seriesVar(a.slot ?? 0)}"></i>${esc(a.name)}` +
+          (a.anchored ? `<div style="font-size:11px;color:var(--ink-3)">מ-${a.anchorDate} · ${a.moves} תנועות</div>` : ''),
+          a.anchored ? `<span class="num">${money(a.anchor)}</span>` : '<span style="color:var(--ink-3)">—</span>',
+          a.anchored
+            ? `<span class="num" style="color:${a.movement >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${a.movement >= 0 ? '+' : '−'}${money0(Math.abs(a.movement))}</span>`
+            : '—',
+          a.anchored ? `<b class="num">${money(a.current)}</b>` : '<span style="color:var(--ink-3)">לא הוגדר</span>',
+        ],
+      })),
+    )}`;
+}
+
+function openBalances() {
+  const b = ST.balances(S.txs, S.accounts.filter(a => a.active !== false));
+  $('#balances-body').innerHTML = `
+    <div class="hint" style="margin:0 0 14px">הזן את היתרה כפי שהיא הייתה <b>בתחילת</b> התאריך שתבחר.
+      מאותו יום ואילך כל תנועה שתרשום מזיזה אותה לבד — הכנסה מוסיפה, הוצאה מחסירה.</div>
+    ${b.accounts.map(a => `
+      <div class="panel" style="margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <i class="swatch" style="background:${C.seriesVar(a.slot ?? 0)};margin:0"></i>
+          <b style="font-size:14px">${esc(a.name)}</b>
+        </div>
+        <div class="pair">
+          <div class="field" style="margin:0"><label>יתרה ₪</label>
+            <input class="inp" type="number" step="0.01" inputmode="decimal"
+              data-bal="${esc(a.id)}" value="${a.anchored ? a.anchor / 100 : ''}"></div>
+          <div class="field" style="margin:0"><label>בתחילת תאריך</label>
+            <input class="inp" type="date" data-baldate="${esc(a.id)}"
+              value="${a.anchorDate || todayISO()}"></div>
+        </div>
+        ${a.anchored ? `<div class="hint">כרגע מחושב: <b>${money(a.current)}</b></div>` : ''}
+      </div>`).join('')}
+    <button class="btn accent" id="save-balances">שמירה</button>`;
+  openSheet('sh-balances');
+}
+
+async function saveBalances() {
+  for (const a of S.accounts) {
+    const v = $(`[data-bal="${a.id}"]`);
+    const d = $(`[data-baldate="${a.id}"]`);
+    if (!v) continue;
+    const raw = v.value.trim();
+    await DB.put('accounts', {
+      ...a,
+      balance: raw === '' ? 0 : toAgorot(raw),
+      balanceDate: raw === '' ? null : (d?.value || todayISO()),
+    });
+  }
+  await reload();
+  closeSheet('sh-balances');
+  toast('היתרות עודכנו');
+  render();
+}
+
+/* ==================== תקציבי קטגוריה ==================== */
+
+function renderBudgets() {
+  const host = $('#budgets');
+  const st = ST.budgetStatus(S.txs, S.budgets, curMonth());
+  if (!st.items.length) {
+    host.innerHTML = `<div class="empty">תקציב אחד גלובלי לא אומר לך איפה חרגת.<br>
+      הגדר תקציב לקטגוריות שחשובות לך — מזון, יציאות, קניות.
+      <div style="margin-top:14px"><button class="btn accent sm" id="set-budgets">הגדרת תקציבים</button></div></div>`;
+    return;
+  }
+  const COLOR = { over: 'var(--neg)', ahead: 'var(--warn)', ok: 'var(--s1)', unused: 'var(--rule-2)' };
+  const WORD = { over: 'חריגה', ahead: 'מקדים', ok: 'בקצב', unused: 'לא נוגע' };
+  host.innerHTML =
+    (st.over || st.ahead
+      ? `<div class="note ${st.over ? 'bad' : 'warn'}">${icon('alert')}<span class="grow">
+         ${st.over ? `${st.over} קטגוריות בחריגה` : `${st.ahead} קטגוריות מקדימות את הקצב`}</span></div>`
+      : '') +
+    st.items.map(i => `
+      <div class="row" style="cursor:pointer;align-items:flex-start" data-deptrow="${esc(i.dept)}">
+        <span style="flex:1;min-width:0">
+          <span style="display:flex;align-items:baseline;gap:9px">
+            <span style="flex:1;font-size:13.5px;font-weight:550">${esc(i.label)}</span>
+            <span style="font-size:11px;font-weight:620;color:${COLOR[i.state]}">${WORD[i.state]}</span>
+            <span class="num" style="font-size:13px">${money0(i.spent)} <span style="color:var(--ink-3)">/ ${money0(i.amount)}</span></span>
+          </span>
+          <span class="cellbar" style="height:5px">
+            <i style="width:${Math.min(100, i.ratio * 100)}%;background:${COLOR[i.state]}"></i>
+          </span>
+          <span style="display:block;font-size:11px;color:var(--ink-3);margin-top:4px">
+            ${i.left >= 0 ? `נשאר ${money(i.left)}` : `חרגת ב-${money(-i.left)}`}
+          </span>
+        </span>
+      </div>`).join('');
+}
+
+function openBudgets() {
+  const byKey = Object.fromEntries(S.budgets.map(b => [b.key, b.amount]));
+  const st = ST.budgetStatus(S.txs, S.budgets, curMonth());
+  const spent3 = (deptKey) => {
+    const ms = ST.monthsRange(shiftMonth(curMonth(), -1), 3);
+    const vals = ms.map(m => live(S.txs).filter(t => t.month === m && t.dept === deptKey && flowOf(t.dept) === 'out')
+      .reduce((s, t) => s + ils(t), 0));
+    return ST.median(vals.filter(v => v > 0));
+  };
+  $('#budgets-body').innerHTML = `
+    <div class="hint" style="margin:0 0 14px">השאר ריק כדי לא לתקצב. ההצעה שלצד כל שדה היא
+      חציון שלושת החודשים הקודמים — נקודת פתיחה מציאותית ולא משאלה.</div>
+    ${EXPENSE_DEPTS.map(d => {
+      const sug = spent3(d.key);
+      return `<div class="field">
+        <label style="display:flex;justify-content:space-between;text-transform:none;letter-spacing:0;font-size:12px">
+          <span>${icon(d.icon, 13)} ${esc(d.label)}</span>
+          ${sug ? `<button data-sug="${d.key}:${sug}" style="color:var(--accent);font-size:11px;text-decoration:underline">הצע ${money0(sug)}</button>` : ''}
+        </label>
+        <input class="inp" type="number" inputmode="decimal" placeholder="ללא תקציב"
+          data-budget="${d.key}" value="${byKey[d.key] ? byKey[d.key] / 100 : ''}">
+      </div>`;
+    }).join('')}
+    <button class="btn accent" id="save-budgets">שמירה</button>
+    <div class="hint">סה״כ מתוקצב כרגע: <b>${money(st.totalBudget)}</b></div>`;
+  openSheet('sh-budgets');
+}
+
+async function saveBudgets() {
+  await DB.clear('budgets');
+  const rows = [];
+  for (const el of $$('[data-budget]')) {
+    const amount = toAgorot(el.value);
+    if (amount > 0) rows.push({ key: el.dataset.budget, amount });
+  }
+  if (rows.length) await DB.putMany('budgets', rows);
+  await reload();
+  closeSheet('sh-budgets');
+  toast(rows.length ? `${rows.length} תקציבים נשמרו` : 'התקציבים נוקו');
+  render();
+}
+
+/* ==================== פיצול תנועה ==================== */
+
+function openSplit(id) {
+  const t = S.txs.find(x => x.id === id);
+  if (!t) return;
+  SPLIT.parent = t;
+  SPLIT.parts = [
+    { amount: Math.round(ils(t) / 2), dept: t.dept, cat: t.cat },
+    { amount: ils(t) - Math.round(ils(t) / 2), dept: 'food', cat: 'general' },
+  ];
+  drawSplit();
+  openSheet('sh-split');
+}
+
+const SPLIT = { parent: null, parts: [] };
+
+function drawSplit() {
+  const t = SPLIT.parent;
+  const sum = SPLIT.parts.reduce((s, p) => s + p.amount, 0);
+  const diff = ils(t) - sum;
+  $('#split-body').innerHTML = `
+    <div class="panel" style="margin-bottom:14px">
+      <div style="font-weight:620">${esc(t.merchant || catLabel(t.dept, t.cat))}</div>
+      <div style="font-size:22px;font-weight:660;margin-top:3px" class="num">${money(ils(t))}</div>
+    </div>
+    ${SPLIT.parts.map((p, i) => `
+      <div class="panel" style="margin-bottom:9px">
+        <div class="pair">
+          <div class="field" style="margin:0"><label>סכום ₪</label>
+            <input class="inp" type="number" step="0.01" inputmode="decimal"
+              data-splitamt="${i}" value="${p.amount / 100}"></div>
+          <div class="field" style="margin:0"><label>קטגוריה</label>
+            <button class="inp" data-splitcat="${i}" style="text-align:right;font-size:13px">${esc(catLabel(p.dept, p.cat))}</button></div>
+        </div>
+        ${SPLIT.parts.length > 2 ? `<button data-splitdel="${i}" style="font-size:12px;color:var(--critical);text-decoration:underline;margin-top:6px">הסר חלק</button>` : ''}
+      </div>`).join('')}
+    <button class="btn ghost sm" id="split-add" style="margin-bottom:12px">+ חלק נוסף</button>
+    <div class="note ${diff === 0 ? 'ok' : 'warn'}" style="margin-bottom:12px">
+      ${icon(diff === 0 ? 'check' : 'alert')}
+      <span class="grow">${diff === 0 ? 'הסכומים מתאזנים' : `הפרש של ${money(Math.abs(diff))} ${diff > 0 ? 'חסר' : 'עודף'}`}</span>
+    </div>
+    <button class="btn accent" id="split-save" ${diff === 0 ? '' : 'disabled'}>פצל לשתי תנועות ומעלה</button>`;
+}
+
+async function saveSplit() {
+  const t = SPLIT.parent;
+  const recs = SPLIT.parts.map(p => mkTx({
+    dateBuy: t.dateBuy, dateCharge: t.dateCharge, merchant: t.merchant,
+    amount: p.amount, ils: p.amount, currency: 'ILS',
+    dept: p.dept, cat: p.cat, account: t.account, method: t.method,
+    tags: t.tags, note: t.note, source: 'split', splitOf: t.id,
+  }));
+  await DB.saveTxMany(recs);
+  await DB.del('tx', t.id);
+  await reload();
+  closeSheet('sh-split');
+  toast(`פוצל ל-${recs.length} תנועות`);
+  render();
+}
+
+/* ==================== ניהול חוקים ==================== */
+
+function openRules() {
+  const rules = [...S.rules].sort((a, b) => (b.hits || 0) - (a.hits || 0));
+  $('#rules-body').innerHTML = `
+    <div class="hint" style="margin:0 0 14px">כל תיוג שאתה עושה נשמר כאן ומוחל אוטומטית בפעם הבאה.
+      אפשר לתקן או למחוק — תיקון כאן משנה את הסיווג של כל מה שיגיע בעתיד.</div>
+    ${rules.length ? `<div class="rows">${rules.map(r => `
+      <div class="row" style="cursor:default">
+        <span class="body">
+          <span class="t1">${esc(r.merchant || r.key)}</span>
+          <span class="t2">${esc(pathLabel(r.dept, r.cat))} · הוחל ${r.hits || 0} פעמים</span>
+        </span>
+        <button class="chip" data-ruleedit="${esc(r.key)}">שנה</button>
+        <button class="chip" data-ruledel="${esc(r.key)}" style="color:var(--critical)">✕</button>
+      </div>`).join('')}</div>`
+      : '<div class="empty">אין עדיין חוקים. הם נוצרים לבד מכל תנועה שאתה מתייג.</div>'}`;
+  openSheet('sh-rules');
 }
 
 /* ==================== מסך: ניתוח ==================== */
@@ -1190,14 +1435,14 @@ async function renderSettings() {
 const ADD = {
   amount: '', dept: 'food', cat: 'general', method: 'cash', account: 'bank1',
   date: todayISO(), merchant: '', income: false, business: false, currency: 'ILS',
-  editId: null, touched: false,
+  editId: null, touched: false, tags: [],
 };
 
 function openAdd(preset = {}) {
   Object.assign(ADD, {
     amount: '', dept: 'food', cat: 'general', method: 'cash', account: 'bank1',
     date: todayISO(), merchant: '', income: false, business: false, currency: 'ILS',
-    editId: null, touched: false,
+    editId: null, touched: false, tags: [],
   }, preset);
   
   $('#add-merch').value = ADD.merchant;
@@ -1242,9 +1487,13 @@ function drawAdd() {
     `<option value="${esc(s.id)}" ${ADD.account === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
   $('#add-method').innerHTML = Object.entries(METHOD_LABEL).map(([k, l]) =>
     `<option value="${k}" ${ADD.method === k ? 'selected' : ''}>${l}</option>`).join('');
+  const known = ST.allTags(S.txs);
+  const shown = [...new Set([...ADD.tags, ...known])].slice(0, 10);
   $('#add-flags').innerHTML = `
     <button class="chip ${ADD.business ? 'on' : ''}" data-flag="business">עסקי</button>
-    <button class="chip ${ADD.currency === 'USD' ? 'on' : ''}" data-flag="usd">דולר</button>`;
+    <button class="chip ${ADD.currency === 'USD' ? 'on' : ''}" data-flag="usd">דולר</button>
+    ${shown.map(t => `<button class="chip ${ADD.tags.includes(t) ? 'on' : ''}" data-tagtoggle="${esc(t)}">#${esc(t)}</button>`).join('')}
+    <button class="chip" id="add-newtag">+ תגית</button>`;
   $('#add-save').disabled = !toAgorot(ADD.amount);
   $('#add-save').textContent = ADD.editId ? 'עדכון' : 'שמירה';
 }
@@ -1271,6 +1520,7 @@ async function saveAdd() {
     dept: ADD.dept, cat: ADD.cat, method: $('#add-method').value,
     account: $('#add-account').value,
     scope: ADD.business ? 'business' : undefined,
+    tags: ADD.tags,
   });
   if (ADD.editId) {
     const old = S.txs.find(t => t.id === ADD.editId);
@@ -1299,9 +1549,21 @@ function openCatPicker(target, current) {
   openSheet('sh-cat');
 }
 
-function onCatPicked(dk, ck) {
+let RULE_EDIT = null;
+
+async function onCatPicked(dk, ck) {
   closeSheet('sh-cat');
   const d = defaultsFor(dk, ck);
+  if (catTarget?.split !== undefined) {
+    Object.assign(SPLIT.parts[catTarget.split], { dept: dk, cat: ck });
+    drawSplit(); return;
+  }
+  if (catTarget === 'rule' && RULE_EDIT) {
+    const r = S.rules.find(x => x.key === RULE_EDIT);
+    if (r) { await DB.put('rules', { ...r, dept: dk, cat: ck }); await reload(); }
+    RULE_EDIT = null;
+    openRules(); toast('החוק עודכן'); return;
+  }
   if (catTarget === 'add') {
     ADD.dept = dk; ADD.cat = ck; ADD.touched = true;
     ADD.income = flowOf(dk) === 'in';
@@ -1518,6 +1780,7 @@ function openTx(id) {
     </div>
     ${t.needsReview ? `<button class="btn accent" data-tx-act="ok" style="margin-bottom:9px">${icon('check')}אשר ונקה מהתור</button>` : ''}
     <button class="btn ghost" data-tx-act="edit" style="margin-bottom:9px">עריכה</button>
+    ${flowOf(t.dept) === 'out' && !t.splitOf ? '<button class="btn ghost" data-tx-act="split" style="margin-bottom:9px">פיצול בין קטגוריות</button>' : ''}
     <button class="btn ghost" data-tx-act="${t.dupOf ? 'undup' : 'dup'}" style="margin-bottom:9px">${t.dupOf ? 'זו לא כפילות' : 'סמן ככפילות'}</button>
     <button class="btn danger" data-tx-act="del">${icon('trash')}מחיקה</button>`;
   $('#tx-body').dataset.id = id;
@@ -1530,12 +1793,14 @@ async function txAction(action, id) {
   if (action === 'del') {
     await DB.del('tx', id); await reload(); closeSheet('sh-tx'); toast('נמחק'); render(); return;
   }
+  if (action === 'split') { closeSheet('sh-tx'); openSplit(id); return; }
   if (action === 'edit') {
     closeSheet('sh-tx');
     openAdd({
       editId: t.id, amount: String(t.amount / 100), dept: t.dept, cat: t.cat,
       method: t.method, date: t.dateBuy, merchant: t.merchant, account: acctOf(t),
       income: flowOf(t.dept) === 'in', business: t.scope === 'business', currency: t.currency,
+      tags: [...(t.tags || [])],
     });
     return;
   }
@@ -1896,6 +2161,61 @@ function wire() {
     const pn = hit('[data-pin]')?.dataset.pin;
     if (pn) { openPin(pn); return; }
     if (hit('#st-export-enc')) { await doExportEncrypted(); return; }
+
+    /* ---- יתרות ---- */
+    if (hit('#edit-balances') || hit('#set-balances')) { openBalances(); return; }
+    if (hit('#save-balances')) { await saveBalances(); return; }
+
+    /* ---- תקציבים ---- */
+    if (hit('#edit-budgets') || hit('#set-budgets')) { openBudgets(); return; }
+    if (hit('#save-budgets')) { await saveBudgets(); return; }
+    const sugBtn = hit('[data-sug]')?.dataset.sug;
+    if (sugBtn) {
+      const [k, v] = sugBtn.split(':');
+      const inp = $(`[data-budget="${k}"]`);
+      if (inp) inp.value = (Number(v) / 100).toFixed(0);
+      return;
+    }
+
+    /* ---- פיצול ---- */
+    if (hit('#split-add')) {
+      SPLIT.parts.push({ amount: 0, dept: 'food', cat: 'general' });
+      drawSplit(); return;
+    }
+    const splitDel = hit('[data-splitdel]');
+    if (splitDel) { SPLIT.parts.splice(+splitDel.dataset.splitdel, 1); drawSplit(); return; }
+    const splitCat = hit('[data-splitcat]');
+    if (splitCat) {
+      const i = +splitCat.dataset.splitcat;
+      openCatPicker({ split: i }, `${SPLIT.parts[i].dept}/${SPLIT.parts[i].cat}`);
+      return;
+    }
+    if (hit('#split-save')) { await saveSplit(); return; }
+
+    /* ---- חוקים ---- */
+    if (hit('#st-managerules')) { openRules(); return; }
+    const ruleDel = hit('[data-ruledel]');
+    if (ruleDel) {
+      await DB.del('rules', ruleDel.dataset.ruledel);
+      await reload(); openRules(); toast('החוק נמחק'); return;
+    }
+    const ruleEdit = hit('[data-ruleedit]');
+    if (ruleEdit) { RULE_EDIT = ruleEdit.dataset.ruleedit; openCatPicker('rule', ''); return; }
+
+    /* ---- תגיות ---- */
+    const tagBtn = hit('[data-tagtoggle]');
+    if (tagBtn) {
+      const tag = tagBtn.dataset.tagtoggle;
+      const i = ADD.tags.indexOf(tag);
+      if (i >= 0) ADD.tags.splice(i, 1); else ADD.tags.push(tag);
+      drawAdd(); return;
+    }
+    if (hit('#add-newtag')) {
+      const t2 = prompt('שם התגית (לדוגמה: חופשה, שיפוץ):');
+      const clean = (t2 || '').trim().slice(0, 24);
+      if (clean && !ADD.tags.includes(clean)) ADD.tags.push(clean);
+      drawAdd(); return;
+    }
     const rs = hit('[data-restore]');
     if (rs) {
       if (!confirm('לשחזר לגיבוי הזה? המצב הנוכחי יוחלף (ונשמר כגיבוי לפני כן).')) return;

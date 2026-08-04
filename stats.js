@@ -2,6 +2,7 @@
 // כל פונקציה טהורה: מקבלת תנועות, מחזירה מספרים. אין כאן DOM ואין אחסון.
 
 import { flowOf, dept, catLabel } from './taxonomy.js';
+export { flowOf };
 
 const ils = (t) => t.ils ?? t.amount ?? 0;
 export const live = (rows) => rows.filter(t => !t.dupOf);
@@ -231,6 +232,111 @@ export function baseline(txs, month, selector = () => true) {
   const prev = monthsRange(shiftMonth(month, -1), 3);
   const vals = prev.map(m => sum(spend(txs.filter(t => t.month === m)).filter(selector)));
   return { months: prev, values: vals, median: median(vals.filter(v => v > 0)) };
+}
+
+/* ==================== יתרות ושווי נקי ==================== */
+
+/**
+ * האפליקציה עוקבת אחרי תזרים, לא אחרי מלאי. כדי לענות על "כמה יש לי"
+ * נדרשת נקודת עיגון אחת: יתרה שהוזנה ידנית ותאריך שאליו היא נכונה.
+ * משם והלאה כל תנועה מזיזה אותה — הכנסה מוסיפה, הוצאה מחסירה,
+ * והעברה בין חשבונות לא משנה את הסך הכולל.
+ */
+export function balances(txs, accounts, today = new Date()) {
+  const rows = live(txs);
+  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const out = accounts.map(a => {
+    const anchored = !!a.balanceDate;
+    // העוגן הוא היתרה **בתחילת** התאריך שנבחר, ולכן תנועות מאותו יום
+    // ואילך נספרות. עם > במקום >= הוצאה שנרשמת מיד אחרי העדכון לא הייתה
+    // מזיזה את היתרה, וזה נראה כמו תקלה.
+    const since = anchored
+      ? rows.filter(t => t.account === a.id && t.dateBuy >= a.balanceDate && t.dateBuy <= iso)
+      : [];
+    const inflow = since.filter(t => flowOf(t.dept) === 'in').reduce((s, t) => s + ils(t), 0);
+    const outflow = since.filter(t => flowOf(t.dept) === 'out').reduce((s, t) => s + ils(t), 0);
+    return {
+      id: a.id, name: a.name, slot: a.slot, type: a.type,
+      anchored,
+      anchor: a.balance || 0, anchorDate: a.balanceDate || null,
+      inflow, outflow, movement: inflow - outflow,
+      current: anchored ? (a.balance || 0) + inflow - outflow : null,
+      moves: since.length,
+    };
+  });
+  const known = out.filter(a => a.anchored);
+  return {
+    accounts: out,
+    netWorth: known.reduce((s, a) => s + a.current, 0),
+    covered: known.length,
+    total: accounts.length,
+    complete: known.length === accounts.length && accounts.length > 0,
+    // הישן ביותר קובע עד כמה המספר טרי
+    oldestAnchor: known.length ? known.map(a => a.anchorDate).sort()[0] : null,
+  };
+}
+
+/* ==================== תקציב לפי קטגוריה ==================== */
+
+/**
+ * budgets: [{key:'dept' | 'dept/cat', amount}]
+ * מחזיר מצב לכל תקציב מוגדר, כולל קצב — האם ההוצאה מקדימה את החודש.
+ */
+export function budgetStatus(txs, budgets, month, today = new Date()) {
+  const rows = spend(txs.filter(t => t.month === month));
+  const dim = daysInMonth(month);
+  const isCurrent = month === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const elapsed = isCurrent ? today.getDate() / dim : 1;
+
+  const spentFor = (key) => {
+    const [d, c] = key.split('/');
+    return rows.filter(t => (c ? t.dept === d && t.cat === c : t.dept === d))
+      .reduce((s, t) => s + ils(t), 0);
+  };
+
+  const items = budgets.filter(b => b.amount > 0).map(b => {
+    const spentV = spentFor(b.key);
+    const [d, c] = b.key.split('/');
+    const ratio = b.amount ? spentV / b.amount : 0;
+    // "מקדים" = הוצאת יותר ממה שהיה צפוי לפי החלק שעבר מהחודש
+    const pace = elapsed > 0 ? ratio / elapsed : 0;
+    return {
+      key: b.key, dept: d, cat: c || null,
+      label: c ? catLabel(d, c) : (dept(d)?.label || d),
+      amount: b.amount, spent: spentV, left: b.amount - spentV,
+      ratio, pace,
+      state: ratio > 1 ? 'over' : pace > 1.15 ? 'ahead' : ratio > 0 ? 'ok' : 'unused',
+    };
+  });
+  items.sort((a, b) => b.ratio - a.ratio);
+  return {
+    items, elapsed,
+    totalBudget: items.reduce((s, i) => s + i.amount, 0),
+    totalSpent: items.reduce((s, i) => s + i.spent, 0),
+    over: items.filter(i => i.state === 'over').length,
+    ahead: items.filter(i => i.state === 'ahead').length,
+  };
+}
+
+/* ==================== תגיות ==================== */
+
+export function tagTotals(txs, month = null) {
+  const rows = spend(month ? txs.filter(t => t.month === month) : txs);
+  const acc = new Map();
+  for (const t of rows) {
+    for (const tag of (t.tags || [])) {
+      const e = acc.get(tag) || { tag, total: 0, count: 0 };
+      e.total += ils(t); e.count++;
+      acc.set(tag, e);
+    }
+  }
+  return [...acc.values()].sort((a, b) => b.total - a.total);
+}
+
+export function allTags(txs) {
+  const s = new Set();
+  for (const t of txs) for (const tag of (t.tags || [])) s.add(tag);
+  return [...s].sort();
 }
 
 /* ==================== השלכה לסוף חודש ==================== */

@@ -102,6 +102,22 @@
 
   <div class="sec">
     <header>
+      <h2>יתרות</h2>
+      <button class="aside" id="edit-balances" style="text-decoration:underline">עדכון</button>
+    </header>
+    <div id="balances"></div>
+  </div>
+
+  <div class="sec">
+    <header>
+      <h2>תקציבי קטגוריה</h2>
+      <button class="aside" id="edit-budgets" style="text-decoration:underline">ניהול</button>
+    </header>
+    <div id="budgets"></div>
+  </div>
+
+  <div class="sec">
+    <header>
       <h2>הקצב שלך מול החודש הקודם</h2>
       <div class="aside" id="pace-aside"></div>
     </header>
@@ -354,9 +370,12 @@
   </div>
 
   <div class="sec">
-    <header><h2>מילון לומד</h2></header>
-    <div class="hint" id="st-rules" style="margin:0"></div>
-    <button class="btn ghost sm" id="st-clearrules" style="margin-top:11px">איפוס</button>
+    <header><h2>חוקי סיווג</h2></header>
+    <div class="hint" id="st-rules" style="margin:0 0 11px"></div>
+    <div class="btnrow">
+      <button class="btn ghost sm" id="st-managerules">ניהול חוקים</button>
+      <button class="btn ghost sm" id="st-clearrules">איפוס</button>
+    </div>
   </div>
 
   <div class="sec">
@@ -432,8 +451,28 @@
 </div></div>
 
 <div class="sheet" id="sh-account"><div class="veil" data-close></div><div class="card">
-  <div class="grip"></div><h2 class="title">מקור</h2>
+  <div class="grip"></div><h2 class="title">חשבון</h2>
   <div id="account-body"></div>
+</div></div>
+
+<div class="sheet" id="sh-balances"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">עדכון יתרות</h2>
+  <div id="balances-body"></div>
+</div></div>
+
+<div class="sheet" id="sh-budgets"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">תקציבי קטגוריה</h2>
+  <div id="budgets-body"></div>
+</div></div>
+
+<div class="sheet" id="sh-split"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">פיצול תנועה</h2>
+  <div id="split-body"></div>
+</div></div>
+
+<div class="sheet" id="sh-rules"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title">חוקי סיווג</h2>
+  <div id="rules-body"></div>
 </div></div>
 
 <div class="toast" id="toast"></div>
