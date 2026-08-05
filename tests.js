@@ -722,6 +722,43 @@ await t('פער מזומן מזוהה', () => {
   assert(f, 'פער המזומן לא זוהה');
 });
 
+/* ==================== חיווט ==================== */
+// באג אמיתי שנתפס כאן: התכונה הייתה בשם אחד והקוד קרא מפתח אחר.
+// הערך יצא undefined, העורך נפתח כ"חדש", ועריכה יצרה כפילות במקום לעדכן.
+// הסריקה מתעלמת מהערות כדי שתיעוד לא ייחשב לשימוש.
+
+G('חיווט');
+
+/** מסיר הערות כדי שתיעוד לא ייחשב לקוד חי */
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+await t('כל dataset שנקרא בקוד מתאים לתכונה שמצוירת', async () => {
+  const src = stripComments(await (await fetch('./app.js')).text());
+  const html = await (await fetch('./index.html')).text();
+  const toCamel = (s) => s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+
+  const rendered = new Set(
+    [...(src + html).matchAll(/data-([a-z-]+)=/g)].map(m => toCamel(m[1])));
+  // מפתחות שנכתבים בקוד ולא כתכונה בתבנית
+  for (const k of ['id', 'v', 'plain']) rendered.add(k);
+
+  const read = [...src.matchAll(/dataset\.([A-Za-z]+)/g)].map(m => m[1]);
+  const orphans = [...new Set(read)].filter(k => !rendered.has(k));
+  assertEq(orphans, [], 'dataset נקרא בלי תכונה תואמת');
+});
+
+await t('כל data-attribute שמצויר מטופל או נקרא', async () => {
+  const src = stripComments(await (await fetch('./app.js')).text());
+  const html = await (await fetch('./index.html')).text();
+  const attrs = [...new Set([...(src + html).matchAll(/data-([a-z-]+)[=\s>"]/g)].map(m => m[1]))];
+  const unused = attrs.filter(a =>
+    !src.includes(`[data-${a}]`) &&                       // נבחר בסלקטור
+    !src.includes(`data-${a}=`) === false &&              // נכתב בתבנית
+    !src.includes(`dataset.${a.replace(/-([a-z])/g, (_, c) => c.toUpperCase())}`));
+  // bal/baldate נקראים בסלקטור מפורש עם ערך, ולכן חוקיים
+  assertEq(unused.filter(a => !['bal', 'baldate', 'i'].includes(a)), []);
+});
+
 /* ==================== גרפים ==================== */
 
 G('גרפים');

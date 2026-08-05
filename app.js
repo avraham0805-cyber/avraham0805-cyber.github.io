@@ -2073,12 +2073,6 @@ function wire() {
     if (act === 'settings') { S.view = 'settings'; render(); return; }
     if (act === 'export') { await doExport(); return; }
 
-    const q = hit('[data-quick]');
-    if (q) {
-      const [d, c] = q.dataset.quick.split('/');
-      openAdd({ dept: d, cat: c, ...defaultsFor(d, c), business: defaultsFor(d, c).scope === 'business', income: flowOf(d) === 'in' });
-      return;
-    }
 
     const tx = hit('[data-tx]');
     if (tx) { openTx(tx.dataset.tx); return; }
@@ -2159,7 +2153,9 @@ function wire() {
     if (hit('[data-fdel]')) { await DB.del('fixed', FIXED.id); await reload(); closeSheet('sh-fixed'); toast('נמחק'); render(); return; }
 
     // מקורות
-    const sm = hit('[data-acct]'); if (sm) { openAccount(sm.dataset.account); return; }
+    // המפתח ב-dataset חייב להתאים בדיוק לשם התכונה. מפתח שגוי מחזיר
+    // undefined, העורך נפתח כ"חשבון חדש", ועריכה יוצרת כפילות במקום לעדכן.
+    const sm = hit('[data-acct]'); if (sm) { openAccount(sm.dataset.acct); return; }
     if (hit('#st-addaccount')) { openAccount(); return; }
     const sl = hit('[data-slot]'); if (sl) { ACCT.slot = +sl.dataset.slot; drawAccount(); return; }
     if (hit('[data-ssave]')) { await saveAccount(); return; }
