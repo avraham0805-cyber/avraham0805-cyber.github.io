@@ -385,6 +385,8 @@ const cleanAccount = (s) => (s && typeof s === 'object' && s.id ? {
 
 const cleanBudget = (b) => (b && typeof b === 'object' && b.key ? {
   key: STR(b.key, 60), amount: Math.max(0, NUM(b.amount)),
+  rollover: b.rollover === true,
+  since: /^\d{4}-\d{2}$/.test(b.since) ? b.since : null,
 } : null);
 
 const cleanMeta = (m) => (m && typeof m.k === 'string' && !NEVER_EXPORT.has(m.k)

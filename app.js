@@ -332,7 +332,7 @@ function barRows(items, total, { onClickAttr = () => '' } = {}) {
     </div>`).join('') + '</div>';
 }
 
-function txRow(t) {
+function txRow(t, selectable = false) {
   const D = dept(t.dept), f = flowOf(t.dept);
   const cls = f === 'in' ? 'in' : f === 'neutral' ? 'neutral' : '';
   const pills = [
@@ -344,7 +344,11 @@ function txRow(t) {
     t.splitOf ? '<span class="pill">מפוצל</span>' : '',
   ].join('');
   const acctTag = S.accounts.length > 1 ? ` · ${esc(acctName(acctOf(t)))}` : '';
+  const box = selectable
+    ? `<span class="selbox ${SEL.has(t.id) ? 'on' : ''}" data-sel="${t.id}">${SEL.has(t.id) ? icon('check', 11) : ''}</span>`
+    : '';
   return `<button class="row" data-tx="${t.id}">
+    ${box}
     <span class="gl">${icon(D?.icon || 'list')}</span>
     <span class="body">
       <span class="t1">${esc(t.merchant || catLabel(t.dept, t.cat))}${pills}</span>
@@ -649,11 +653,20 @@ function renderHome() {
 
   let eyebrow, figVal, sub, meter = '';
   if (budget > 0) {
-    const daysLeft = Math.max(1, daysInMonth(m) - now.getDate() + 1);
-    figVal = Math.floor((budget - st.out) / daysLeft);
-    eyebrow = 'נשאר להוציא היום';
-    sub = `<b>${money(st.out)}</b> מתוך ${money(budget)} · נותרו ${daysLeft} ימים`;
-    meter = `<div class="meter"><i class="${st.out > budget ? 'over' : ''}" style="width:${Math.min(100, pct(st.out, budget))}%"></i></div>`;
+    S.insights ||= IN.analyze(S.txs);
+    const up = ST.upcoming(S.txs, S.insights.recurring || [], S.fixed, 30);
+    const safe = ST.safeToSpend(S.txs, budget, m, up.total);
+    figVal = safe.perDay;
+    eyebrow = 'פנוי להוציא היום';
+    sub = `<b>${money(st.out)}</b> מתוך ${money(budget)} · נותרו ${safe.daysLeft} ימים` +
+      (safe.committed
+        ? `<br><span style="color:rgba(255,255,255,.42)">${money(safe.committed)} כבר מחויבים לחיובים ידועים${safe.inflated ? ` · בלעדיהם המספר היה גבוה ב-${money(safe.inflated)}` : ''}</span>`
+        : '');
+    // הפס מציג שלוש שכבות: מה שיצא, מה שמחויב, ומה שבאמת פנוי
+    meter = `<div class="meter">
+      <i class="${st.out > budget ? 'over' : ''}" style="width:${Math.min(100, pct(st.out, budget))}%"></i>
+      ${safe.committed ? `<i style="width:${Math.min(100 - pct(st.out, budget), pct(safe.committed, budget))}%;background:rgba(255,255,255,.30)"></i>` : ''}
+    </div>`;
   } else {
     figVal = st.out;
     eyebrow = S.acctFilter ? `יצא ב${acctName(S.acctFilter)} החודש` : 'הוצאת החודש';
@@ -829,6 +842,7 @@ function renderBudgets() {
   }
   const COLOR = { over: 'var(--neg)', ahead: 'var(--warn)', ok: 'var(--s1)', unused: 'var(--rule-2)' };
   const WORD = { over: 'חריגה', ahead: 'מקדים', ok: 'בקצב', unused: 'לא נוגע' };
+  const carried = ST.rollover(S.txs, S.budgets, curMonth());
   host.innerHTML =
     (st.over || st.ahead
       ? `<div class="note ${st.over ? 'bad' : 'warn'}">${icon('alert')}<span class="grow">
@@ -847,13 +861,19 @@ function renderBudgets() {
           </span>
           <span style="display:block;font-size:11px;color:var(--ink-3);margin-top:4px">
             ${i.left >= 0 ? `נשאר ${money(i.left)}` : `חרגת ב-${money(-i.left)}`}
+            ${carried.get(i.key) ? ` · <b style="color:var(--delta-up)">+${money(carried.get(i.key))} גלגול</b>` : ''}
           </span>
         </span>
       </div>`).join('');
 }
 
+const ROLL = new Set();
+
 function openBudgets() {
   const byKey = Object.fromEntries(S.budgets.map(b => [b.key, b.amount]));
+  ROLL.clear();
+  S.budgets.filter(b => b.rollover).forEach(b => ROLL.add(b.key));
+  const rollKeys = ROLL;
   const st = ST.budgetStatus(S.txs, S.budgets, curMonth());
   const spent3 = (deptKey) => {
     const ms = ST.monthsRange(shiftMonth(curMonth(), -1), 3);
@@ -871,21 +891,30 @@ function openBudgets() {
           <span>${icon(d.icon, 13)} ${esc(d.label)}</span>
           ${sug ? `<button data-sug="${d.key}:${sug}" style="color:var(--accent);font-size:11px;text-decoration:underline">הצע ${money0(sug)}</button>` : ''}
         </label>
-        <input class="inp" type="number" inputmode="decimal" placeholder="ללא תקציב"
-          data-budget="${d.key}" value="${byKey[d.key] ? byKey[d.key] / 100 : ''}">
+        <div class="pair">
+          <input class="inp" type="number" inputmode="decimal" placeholder="ללא תקציב"
+            data-budget="${d.key}" value="${byKey[d.key] ? byKey[d.key] / 100 : ''}">
+          <button class="chip ${rollKeys.has(d.key) ? 'on' : ''}" data-roll="${d.key}"
+            style="flex:0 0 auto;white-space:nowrap">גלגול</button>
+        </div>
       </div>`;
     }).join('')}
     <button class="btn accent" id="save-budgets">שמירה</button>
-    <div class="hint">סה״כ מתוקצב כרגע: <b>${money(st.totalBudget)}</b></div>`;
+    <div class="hint">סה״כ מתוקצב כרגע: <b>${money(st.totalBudget)}</b>.
+      <b>גלגול</b> מעביר יתרה שלא נוצלה לחודש הבא — כך חודש חריג אחד לא הורס
+      את התקציב, ואפשר לצבור לקנייה גדולה.</div>`;
   openSheet('sh-budgets');
 }
 
 async function saveBudgets() {
+  // עוגן הגלגול נשמר מהקיים כדי שעריכת סכום לא תאפס את הצבירה
+  const prev = Object.fromEntries(S.budgets.map(b => [b.key, b.since]));
   await DB.clear('budgets');
   const rows = [];
   for (const el of $$('[data-budget]')) {
     const amount = toAgorot(el.value);
-    if (amount > 0) rows.push({ key: el.dataset.budget, amount });
+    const key = el.dataset.budget;
+    if (amount > 0) rows.push({ key, amount, rollover: ROLL.has(key), since: prev[key] || curMonth() });
   }
   if (rows.length) await DB.putMany('budgets', rows);
   await reload();
@@ -1339,6 +1368,55 @@ const FILTERS = [
   ['transfer', 'העברות'], ['dup', 'כפילויות'],
 ];
 
+/* ==================== בחירה מרובה ==================== */
+// צילום אחד מייצר 30 שורות. תיקון סיווג אחת-אחת הוא החיכוך הגדול ביותר
+// בזרימה, ולכן הבחירה המרובה היא הפיצ׳ר עם ההחזר הגבוה ביותר כאן.
+
+const SEL = new Set();
+
+/**
+ * ביטול פעולה. גיבוי מקומי מגן מפני אסון, אבל הוא לא מחליף "אופס".
+ * כאן נשמר המצב המדויק של השורות שהשתנו, כדי שאפשר יהיה להחזיר אותן
+ * בלחיצה אחת בלי לגעת בשאר הנתונים.
+ */
+const UNDO = [];
+
+async function undoLast() {
+  const step = UNDO.pop();
+  if (!step) { toast('אין מה לבטל'); return; }
+  if (step.deleted) await DB.saveTxMany(step.before);
+  else await DB.saveTxMany(step.before);
+  await reload();
+  toast(`בוטל: ${step.label}`);
+  render();
+}
+
+function selBar() {
+  if (!SEL.size) return '';
+  const rows = S.txs.filter(t => SEL.has(t.id));
+  const sum = rows.filter(t => flowOf(t.dept) === 'out').reduce((s, t) => s + ils(t), 0);
+  return `<div class="note info" style="position:sticky;top:0;z-index:5">
+    ${icon('check')}<span class="grow"><b>${SEL.size}</b> נבחרו · ${money(sum)}</span>
+    <button data-bulk="cat">סיווג</button>
+    <button data-bulk="acct">חשבון</button>
+    <button data-bulk="tag">תגית</button>
+    <button data-bulk="del" style="color:var(--critical)">מחק</button>
+    <button data-bulk="none">בטל</button>
+  </div>`;
+}
+
+async function bulkApply(fn, label) {
+  const rows = S.txs.filter(t => SEL.has(t.id));
+  if (!rows.length) return;
+  await DB.snapshot('לפני ' + label);
+  UNDO.push({ label, ids: rows.map(r => r.id), before: rows.map(r => ({ ...r })) });
+  for (const t of rows) fn(t);
+  await DB.saveTxMany(rows);
+  await reload();
+  toast(`${rows.length} תנועות · ${label}`);
+  render();
+}
+
 function renderLedger() {
   const D = S.deptFilter ? dept(S.deptFilter) : null;
   $('#lg-filters').innerHTML =
@@ -1367,10 +1445,17 @@ function renderLedger() {
 
   const spend = live(rows).filter(t => flowOf(t.dept) === 'out').reduce((s, t) => s + ils(t), 0);
   const income = live(rows).filter(t => flowOf(t.dept) === 'in').reduce((s, t) => s + ils(t), 0);
-  $('#lg-meta').innerHTML = `${rows.length} תנועות · יצא ${money(spend)}${income ? ` · נכנס ${money(income)}` : ''}`;
+  $('#lg-meta').innerHTML = `${rows.length} תנועות · יצא ${money(spend)}${income ? ` · נכנס ${money(income)}` : ''}` +
+    (UNDO.length ? ` · <button id="undo-last" style="text-decoration:underline;color:var(--accent)">בטל: ${esc(UNDO.at(-1).label)}</button>` : '');
 
+  const shown = rows.slice(0, 400);
+  const allSelected = shown.length && shown.every(t => SEL.has(t.id));
   $('#lg-list').innerHTML = rows.length
-    ? `<div class="rows">${rows.slice(0, 400).map(txRow).join('')}</div>` +
+    ? selBar() +
+      `<div style="display:flex;justify-content:flex-end;padding:4px 2px 8px">
+         <button class="chip" data-bulk="all">${allSelected ? 'בטל בחירת הכל' : `בחר ${shown.length}`}</button>
+       </div>` +
+      `<div class="rows">${shown.map(t => txRow(t, true)).join('')}</div>` +
       (rows.length > 400 ? '<div class="empty">מוצגות 400 הראשונות. צמצם עם חיפוש או מסנן.</div>' : '')
     : '<div class="empty">לא נמצאו תנועות</div>';
 }
@@ -1582,6 +1667,12 @@ async function onCatPicked(dk, ck) {
   if (catTarget?.split !== undefined) {
     Object.assign(SPLIT.parts[catTarget.split], { dept: dk, cat: ck });
     drawSplit(); return;
+  }
+  if (catTarget === 'bulk') {
+    await bulkApply(t => { t.dept = dk; t.cat = ck; Object.assign(t, defaultsFor(dk, ck)); },
+      'סווגו ל' + catLabel(dk, ck));
+    SEL.clear();
+    return;
   }
   if (catTarget === 'rule' && RULE_EDIT) {
     const r = S.rules.find(x => x.key === RULE_EDIT);
@@ -2125,6 +2216,47 @@ function wire() {
       else S.filter = v;
       renderLedger(); return;
     }
+    /* ---- בחירה מרובה ---- */
+    const sel = hit('[data-sel]');
+    if (sel) {
+      e.stopPropagation();
+      const id = sel.dataset.sel;
+      SEL.has(id) ? SEL.delete(id) : SEL.add(id);
+      renderLedger(); return;
+    }
+    const bulk = hit('[data-bulk]')?.dataset.bulk;
+    if (bulk === 'none') { SEL.clear(); renderLedger(); return; }
+    if (bulk === 'all') {
+      const shown = [...document.querySelectorAll('#lg-list [data-sel]')].map(x => x.dataset.sel);
+      const allOn = shown.every(id => SEL.has(id));
+      shown.forEach(id => allOn ? SEL.delete(id) : SEL.add(id));
+      renderLedger(); return;
+    }
+    if (bulk === 'cat') { openCatPicker('bulk', ''); return; }
+    if (bulk === 'acct') {
+      const names = S.accounts.filter(a => a.active !== false);
+      const pick = prompt('לאיזה חשבון?\n' + names.map((a, i) => `${i + 1}. ${a.name}`).join('\n'));
+      const idx = parseInt(pick) - 1;
+      if (!names[idx]) return;
+      await bulkApply(t => { t.account = names[idx].id; }, 'הועברו ל' + names[idx].name);
+      SEL.clear(); return;
+    }
+    if (bulk === 'tag') {
+      const tg = (prompt('שם תגית להוספה:') || '').trim().slice(0, 24);
+      if (!tg) return;
+      await bulkApply(t => { t.tags = [...new Set([...(t.tags || []), tg])]; }, 'תויגו ' + tg);
+      SEL.clear(); return;
+    }
+    if (bulk === 'del') {
+      const rows = S.txs.filter(t => SEL.has(t.id));
+      if (!confirm(`למחוק ${rows.length} תנועות?`)) return;
+      await DB.snapshot('לפני מחיקה מרובה');
+      UNDO.push({ label: `מחיקת ${rows.length} תנועות`, deleted: true, before: rows.map(r => ({ ...r })) });
+      for (const t of rows) await DB.del('tx', t.id);
+      SEL.clear(); await reload(); toast(`${rows.length} נמחקו`); render(); return;
+    }
+    if (hit('#undo-last')) { await undoLast(); return; }
+
     const dr = hit('[data-deptrow]');
     if (dr) { S.deptFilter = dr.dataset.deptrow; S.acctFilter = null; S.filter = 'all'; S.q = ''; $('#q').value = ''; S.view = 'ledger'; scrollTo(0, 0); render(); return; }
     const sr = hit('[data-acctrow]');
@@ -2193,6 +2325,12 @@ function wire() {
     /* ---- תקציבים ---- */
     if (hit('#edit-budgets') || hit('#set-budgets')) { openBudgets(); return; }
     if (hit('#save-budgets')) { await saveBudgets(); return; }
+    const roll = hit('[data-roll]')?.dataset.roll;
+    if (roll) {
+      ROLL.has(roll) ? ROLL.delete(roll) : ROLL.add(roll);
+      hit('[data-roll]').classList.toggle('on');
+      return;
+    }
     const sugBtn = hit('[data-sug]')?.dataset.sug;
     if (sugBtn) {
       const [k, v] = sugBtn.split(':');

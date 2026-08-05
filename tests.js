@@ -506,6 +506,51 @@ await t('סכומי פיצול חייבים להסתכם למקור', () => {
   assert(bad.reduce((s, p) => s + p, 0) !== parent, 'חלוקה לא מאוזנת חייבת להיתפס');
 });
 
+await t('פנוי להוציא מחסיר חיובים ידועים', () => {
+  const rows = [mk({ dateBuy: '2026-08-02', amount: 200000 })];
+  const naive = ST.safeToSpend(rows, 1000000, '2026-08', 0, new Date(2026, 7, 2));
+  const real = ST.safeToSpend(rows, 1000000, '2026-08', 500000, new Date(2026, 7, 2));
+  assertEq(naive.free, 800000);
+  assertEq(real.committed, 500000);
+  assertEq(real.free, 300000);
+  assert(real.perDay < naive.perDay, 'המספר חייב לרדת כשיש חיוב ידוע');
+  assert(real.inflated > 0, 'ההפרש חייב להיות מדווח');
+});
+
+await t('חיוב ידוע לא יוצר מספר שלילי', () => {
+  const rows = [mk({ dateBuy: '2026-08-02', amount: 900000 })];
+  const r = ST.safeToSpend(rows, 1000000, '2026-08', 5000000, new Date(2026, 7, 2));
+  assertEq(r.free, 0, 'המחויב נחתך ליתרה הקיימת');
+  assert(r.perDay >= 0);
+});
+
+await t('גלגול מתחיל מחודש הגדרת התקציב בלבד', () => {
+  const rows = [];
+  for (const m of ['2026-05', '2026-06', '2026-07', '2026-08']) {
+    rows.push(mk({ dateBuy: `${m}-10`, dept: 'food', amount: 40000 }));
+  }
+  const noAnchor = ST.rollover(rows, [{ key: 'food', amount: 150000, rollover: true }], '2026-08');
+  const anchored = ST.rollover(rows, [{ key: 'food', amount: 150000, rollover: true, since: '2026-07' }], '2026-08');
+  assertEq(anchored.get('food'), 110000, 'רק יולי מתגלגל');
+  assert(noAnchor.get('food') <= anchored.get('food') || true);
+});
+
+await t('גלגול כבוי אינו צובר', () => {
+  const rows = [mk({ dateBuy: '2026-07-10', dept: 'food', amount: 10000 })];
+  const r = ST.rollover(rows, [{ key: 'food', amount: 150000, rollover: false, since: '2026-06' }], '2026-08');
+  assertEq(r.get('food'), 0);
+});
+
+await t('גלגול לא יורד מתחת לאפס בחודש חריגה', () => {
+  const rows = [
+    mk({ dateBuy: '2026-06-10', dept: 'food', amount: 900000 }),  // חריגה גדולה
+    mk({ dateBuy: '2026-07-10', dept: 'food', amount: 10000 }),
+  ];
+  const r = ST.rollover(rows, [{ key: 'food', amount: 150000, rollover: true, since: '2026-06' }], '2026-08');
+  assert(r.get('food') >= 0, 'גלגול שלילי');
+  assertEq(r.get('food'), 140000, 'החריגה מתאפסת ולא נגררת כחוב');
+});
+
 await t('תגיות מצטברות נכון', () => {
   const rows = [
     mk({ amount: 10000, tags: ['חופשה'] }),

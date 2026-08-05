@@ -318,6 +318,63 @@ export function budgetStatus(txs, budgets, month, today = new Date()) {
   };
 }
 
+/* ==================== כמה באמת פנוי ==================== */
+
+/**
+ * "נשאר להוציא" תמים משקר: הוא לא יודע ששכר הדירה עוד לא ירד.
+ * הענף כולו פתר את זה באותו אופן — PocketGuard קורא לזה In My Pocket,
+ * Copilot קורא לזה spending line. העיקרון זהה: מחסירים את מה שכבר ידוע
+ * שעומד לרדת, ורק מה שנשאר הוא באמת פנוי.
+ */
+export function safeToSpend(txs, budget, month, upcomingTotal = 0, today = new Date()) {
+  if (!budget) return null;
+  const spent = sum(spend(txs.filter(t => t.month === month)));
+  const dim = daysInMonth(month);
+  const isCurrent = month === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const daysLeft = isCurrent ? Math.max(1, dim - today.getDate() + 1) : 0;
+
+  const rawLeft = budget - spent;
+  const committed = Math.min(Math.max(0, upcomingTotal), Math.max(0, rawLeft));
+  const free = rawLeft - committed;
+
+  return {
+    budget, spent, rawLeft, committed, free, daysLeft,
+    perDay: daysLeft ? Math.floor(free / daysLeft) : free,
+    // בלי החיוב הידוע המספר היה גבוה בזה
+    inflated: daysLeft ? Math.floor(rawLeft / daysLeft) - Math.floor(free / daysLeft) : 0,
+  };
+}
+
+/* ==================== גלגול תקציב ==================== */
+
+/**
+ * יתרה שלא נוצלה מתגלגלת קדימה. זו הדרישה הנפוצה ביותר בענף —
+ * PocketGuard, Monarch, Lunch Money ו-PocketSmith כולם מימשו אותה,
+ * כי בלעדיה חודש חריג אחד הופך כל תקציב שנתי ללא-רלוונטי.
+ * הגלגול מצטבר אחורה עד חודש הפתיחה של התקציב.
+ */
+export function rollover(txs, budgets, month, back = 12) {
+  const byKey = new Map();
+  const months = monthsRange(month, back);
+
+  for (const b of budgets) {
+    if (!b.rollover || !b.amount) { byKey.set(b.key, 0); continue; }
+    // מגלגלים רק מהחודש שבו התקציב הוגדר. בלי העוגן הזה, הפעלת גלגול
+    // "מגלה" יתרה של חודשים שבהם התקציב כלל לא היה קיים — מתנה מדומה
+    // שהופכת את המספר לחסר משמעות בדיוק ברגע שמתחילים להשתמש בו.
+    const from = b.since || month;
+    let carry = 0;
+    for (const m of months.slice(0, -1)) {
+      if (m < from) continue;
+      const item = budgetStatus(txs, [b], m).items[0];
+      if (!item) continue;
+      carry = Math.max(0, carry + item.amount - item.spent);
+    }
+    byKey.set(b.key, carry);
+  }
+  return byKey;
+}
+
 /* ==================== תגיות ==================== */
 
 export function tagTotals(txs, month = null) {

@@ -283,6 +283,13 @@ table.tbl tfoot td { font-weight: 660; border-top: 1px solid var(--rule-2); bord
 .row .amt.in { color: var(--delta-up); }
 .row .amt.neutral { color: var(--ink-3); }
 
+.selbox {
+  width: 19px; height: 19px; flex: 0 0 19px; border-radius: 5px;
+  border: 1.5px solid var(--rule-2); display: grid; place-items: center;
+  color: var(--accent-ink); transition: .1s;
+}
+.selbox.on { background: var(--accent); border-color: var(--accent); }
+
 .pill {
   display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
   background: var(--surface-sunk); color: var(--ink-3); margin-inline-start: 6px; vertical-align: 1px;
