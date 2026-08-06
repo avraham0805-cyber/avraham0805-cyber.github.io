@@ -6,3 +6,4 @@ node_modules/
 kesef-*.json
 kesef-*.csv
 _demo.html
+_site/
