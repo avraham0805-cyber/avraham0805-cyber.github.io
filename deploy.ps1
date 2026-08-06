@@ -1,65 +1,100 @@
-# פריסה לגיטהאב — עוקף את gh auth שנחסם ברשת הזו.
+# פריסה קבועה ל-GitHub Pages.
 #
-# gh נכשל שוב ושוב על POST ל-github.com/login/oauth/access_token, בעוד
-# git ו-curl מול אותו מארח עובדים מצוין. לכן המסלול כאן הוא git נקי
-# עם Git Credential Manager, שפותח חלון התחברות רגיל בדפדפן.
+# למה ריפו בשם <user>.github.io ולא סתם "kesef":
+# לריפו כזה גיטהאב מפעיל Pages **אוטומטית**, בלי להיכנס להגדרות.
+# זה חוסך שלב ידני שלם, והכתובת יוצאת נקייה בשורש הדומיין.
 #
-# הרצה:  powershell -ExecutionPolicy Bypass -File deploy.ps1 -User <שם-המשתמש-שלך>
+# gh auth נחסם ברשת הזו (POST ל-oauth/access_token נתקע), ולכן כאן
+# משתמשים ב-git נקי עם Git Credential Manager — חלון התחברות רגיל.
 
 param(
-  [Parameter(Mandatory = $true)][string]$User,
-  [string]$Repo = "kesef"
+  [string]$User = "avraham0805-cyber"
 )
 
 $ErrorActionPreference = "Stop"
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
             [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$dir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repo = "$User.github.io"
+$url  = "https://$User.github.io/"
 Set-Location $dir
 
-Write-Host ""
-Write-Host "  פריסת 'כסף' ל-GitHub Pages" -ForegroundColor Cyan
-Write-Host "  ---------------------------" -ForegroundColor DarkGray
-
-# GCM חייב להיות פעיל, אחרת git ינסה לשאול בטרמינל ויתקע
-if (-not (git config --global credential.helper)) {
-  git config --global credential.helper manager
-  Write-Host "  · הופעל Git Credential Manager" -ForegroundColor DarkGray
-}
-
-$remote = "https://github.com/$User/$Repo.git"
-
-if (git remote 2>$null | Select-String -Quiet "^origin$") {
-  git remote set-url origin $remote
-} else {
-  git remote add origin $remote
-}
-Write-Host "  · יעד: $remote" -ForegroundColor DarkGray
+function Say($t, $c = "Gray") { Write-Host "  $t" -ForegroundColor $c }
 
 Write-Host ""
-Write-Host "  דוחף... ייפתח חלון התחברות של GitHub — אשר אותו." -ForegroundColor Yellow
-Write-Host ""
+Say "פריסת «כסף» ל-GitHub Pages" "Cyan"
+Say ("-" * 34) "DarkGray"
 
-git push -u origin main
-if ($LASTEXITCODE -ne 0) {
+# --- 1. האם הריפו קיים ---
+Say "בודק אם הריפו קיים..." "DarkGray"
+$exists = $false
+try {
+  $r = Invoke-WebRequest "https://api.github.com/repos/$User/$repo" -UseBasicParsing -TimeoutSec 15
+  $exists = ($r.StatusCode -eq 200)
+} catch { $exists = $false }
+
+if (-not $exists) {
   Write-Host ""
-  Write-Host "  הדחיפה נכשלה." -ForegroundColor Red
-  Write-Host "  אם השגיאה היא 'Repository not found' — הריפו עדיין לא נוצר." -ForegroundColor Red
-  Write-Host "  צור אותו כאן ואז הרץ שוב:" -ForegroundColor Red
-  Write-Host "  https://github.com/new?name=$Repo" -ForegroundColor Cyan
-  exit 1
+  Say "הריפו עדיין לא קיים. זה השלב היחיד שאני לא יכול לעשות בשבילך." "Yellow"
+  Write-Host ""
+  Say "נפתח לך בדפדפן עמוד יצירה ממולא מראש." "Yellow"
+  Say "רק לחץ Create repository — אל תסמן שום דבר תחת Initialize." "Yellow"
+  Write-Host ""
+  Start-Process "https://github.com/new?name=$repo&visibility=public"
+  Read-Host "  אחרי שיצרת, הקש Enter כדי להמשיך"
+
+  try {
+    $r = Invoke-WebRequest "https://api.github.com/repos/$User/$repo" -UseBasicParsing -TimeoutSec 15
+    $exists = ($r.StatusCode -eq 200)
+  } catch { $exists = $false }
+
+  if (-not $exists) {
+    Say "עדיין לא מוצא את הריפו. ודא שהשם בדיוק: $repo" "Red"
+    exit 1
+  }
+}
+Say "✓ הריפו קיים" "Green"
+
+# --- 2. חיווט הרימוט ---
+if (-not (git config --global credential.helper)) { git config --global credential.helper manager }
+if (git remote 2>$null | Select-String -Quiet "^origin$") { git remote set-url origin "https://github.com/$User/$repo.git" }
+else { git remote add origin "https://github.com/$User/$repo.git" }
+Say "✓ רימוט: $User/$repo" "Green"
+
+# --- 3. דחיפה ---
+Write-Host ""
+Say "דוחף... אם ייפתח חלון התחברות של GitHub — אשר אותו." "Yellow"
+Write-Host ""
+git push -u origin main --force
+if ($LASTEXITCODE -ne 0) { Say "הדחיפה נכשלה." "Red"; exit 1 }
+Say "✓ נדחף" "Green"
+
+# --- 4. המתנה ל-Pages ---
+Write-Host ""
+Say "Pages מופעל אוטומטית לריפו הזה. ממתין לעלייה..." "DarkGray"
+$live = $false
+foreach ($i in 1..40) {
+  Start-Sleep -Seconds 15
+  try {
+    $r = Invoke-WebRequest $url -UseBasicParsing -TimeoutSec 12
+    if ($r.StatusCode -eq 200 -and $r.Content -match "כסף") { $live = $true; break }
+  } catch { }
+  Say "  ...עדיין נבנה ($($i*15) שניות)" "DarkGray"
 }
 
 Write-Host ""
-Write-Host "  ✓ נדחף בהצלחה" -ForegroundColor Green
-Write-Host ""
-Write-Host "  נותר שלב אחד ידני — הפעלת Pages:" -ForegroundColor Yellow
-Write-Host "  https://github.com/$User/$Repo/settings/pages" -ForegroundColor Cyan
-Write-Host "  תחת Branch בחר: main / (root)  ואז Save" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "  תוך דקה-שתיים האפליקציה תהיה חיה בכתובת:" -ForegroundColor Green
-Write-Host "  https://$User.github.io/$Repo/" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  פתח אותה בכרום בטלפון, ואז: תפריט ⋮ ← הוספה למסך הבית" -ForegroundColor DarkGray
+if ($live) {
+  Say "================================" "Green"
+  Say "  האפליקציה חיה:" "Green"
+  Say "  $url" "Cyan"
+  Say "================================" "Green"
+  Write-Host ""
+  Say "בטלפון: פתח בכרום ← תפריט ⋮ ← הוספה למסך הבית" "Yellow"
+  Start-Process $url
+} else {
+  Say "הדחיפה הצליחה אבל האתר עוד לא עלה." "Yellow"
+  Say "בנייה ראשונה לוקחת לפעמים כמה דקות. נסה בעוד קצת:" "Yellow"
+  Say "  $url" "Cyan"
+}
 Write-Host ""
