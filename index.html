@@ -98,7 +98,9 @@
     </button>
   </div>
 
+  <div id="setup" hidden></div>
   <div id="home-alerts"></div>
+  <div id="recap" hidden></div>
 
   <div class="sec">
     <header>
@@ -305,6 +307,19 @@
     <input class="inp" id="q" placeholder="חיפוש בית עסק, הערה או קטגוריה" autocomplete="off" type="search">
   </div>
   <div class="filterbar" id="lg-filters"></div>
+  <details id="lg-adv">
+    <summary>סינון מתקדם</summary>
+    <div class="pair">
+      <div class="field" style="margin:0"><label>מתאריך</label><input class="inp" type="date" id="lg-from"></div>
+      <div class="field" style="margin:0"><label>עד תאריך</label><input class="inp" type="date" id="lg-to"></div>
+    </div>
+    <div class="pair">
+      <div class="field" style="margin:0"><label>מסכום ₪</label><input class="inp" type="number" inputmode="decimal" id="lg-min"></div>
+      <div class="field" style="margin:0"><label>עד סכום ₪</label><input class="inp" type="number" inputmode="decimal" id="lg-max"></div>
+    </div>
+    <div class="chipset" id="lg-tags"></div>
+    <button class="btn ghost sm" id="lg-clear">נקה סינון</button>
+  </details>
   <div id="lg-list"></div>
 </section>
 

@@ -147,6 +147,9 @@ export const DEFAULT_ACCOUNTS = [
 
 export const ACCOUNT_TYPE_LABEL = { bank: 'חשבון בנק', cash: 'מזומן', card: 'כרטיס אשראי', other: 'אחר' };
 
+/** השמות שאיתם החשבונות נולדים — משמש לזהות מה עוד לא הותאם אישית */
+export const DEFAULT_ACCOUNT_NAMES = Object.fromEntries(DEFAULT_ACCOUNTS.map(a => [a.id, a.name]));
+
 /** ברירת מחדל לחשבון — מזומן הולך לארנק, כל השאר לחשבון הראשי */
 export function guessAccount(method) {
   return method === 'cash' ? 'cash' : 'bank1';

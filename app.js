@@ -5,7 +5,7 @@ import * as IN from './insights.js';
 import * as ST from './stats.js';
 import * as Crypto from './crypto.js';
 import {
-  DEPTS, EXPENSE_DEPTS, QUICK_SEED, DEFAULT_ACCOUNTS, ACCOUNT_TYPE_LABEL,
+  DEPTS, EXPENSE_DEPTS, QUICK_SEED, DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_NAMES, ACCOUNT_TYPE_LABEL,
   dept, cat, pathLabel, catLabel, flowOf, defaultsFor, guessAccount,
   KIND_LABEL, NEED_LABEL, METHOD_LABEL,
 } from './taxonomy.js';
@@ -65,6 +65,7 @@ const closeAll = () => { $$('.sheet.on').forEach(s => s.classList.remove('on'));
 
 const S = {
   txs: [], rules: [], fixed: [], accounts: [], budgets: [],
+  adv: { from: '', to: '', min: null, max: null, tag: '' },
   budget: 0, fx: { USD: 3.7, EUR: 4.0, GBP: 4.7 },
   month: curMonth(), view: 'home',
   q: '', filter: 'all', deptFilter: null, acctFilter: null,
@@ -705,6 +706,8 @@ function renderHome() {
   }
   $('#home-alerts').innerHTML = alerts.join('');
 
+  renderSetup();
+  renderRecap();
   renderBalances();
   renderBudgets();
 
@@ -747,6 +750,106 @@ function renderHome() {
   $('#recent').innerHTML = recent.length
     ? `<div class="rows">${recent.map(txRow).join('')}</div>`
     : '<div class="empty">אין עדיין תנועות.<br>צלם דף אשראי או הוסף מזומן.</div>';
+}
+
+/* ==================== התחלה ==================== */
+// אפליקציה ריקה היא מבוי סתום: הכל עובד ושום דבר לא מראה כלום.
+// הרשימה הזו נותנת סדר פעולות, מסמנת מה כבר נעשה, ונעלמת מעצמה
+// כשסיימת. היא לא אשף חוסם — אפשר להתעלם ממנה ולעבוד רגיל.
+
+function setupSteps() {
+  const named = S.accounts.some(a => a.builtin && a.name !== DEFAULT_ACCOUNT_NAMES[a.id]);
+  const anchored = S.accounts.some(a => a.balanceDate);
+  return [
+    { id: 'accounts', done: named, label: 'תן שם לחשבונות שלך',
+      hint: 'שני הבנקים והמזומן — כדי שתדע מה שייך לאיפה', act: 'go-accounts', cta: 'לחשבונות' },
+    { id: 'balances', done: anchored, label: 'הזן יתרה נוכחית',
+      hint: 'עוגן אחד לכל חשבון. משם הכל מתעדכן לבד', act: 'set-balances', cta: 'הזן' },
+    { id: 'budget', done: S.budget > 0, label: 'קבע תקציב חודשי',
+      hint: 'המספר הראשי במסך הזה נגזר ממנו', act: 'go-budget', cta: 'קבע' },
+    { id: 'key', done: S.hasKey, label: 'חבר מפתח Gemini',
+      hint: 'זה מה שהופך צילום מסך ל-30 שורות מסווגות', act: 'go-key', cta: 'חבר' },
+    { id: 'first', done: S.txs.length > 0, label: 'הכנס תנועה ראשונה',
+      hint: 'צילום של דף אשראי, או הוצאת מזומן', act: 'act-shot', cta: 'התחל' },
+  ];
+}
+
+function renderSetup() {
+  const host = $('#setup');
+  const steps = setupSteps();
+  const done = steps.filter(s => s.done).length;
+  if (done === steps.length) { host.innerHTML = ''; host.hidden = true; return; }
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="sec">
+      <header>
+        <h2>נשאר להגדיר</h2>
+        <div class="aside num">${done} מתוך ${steps.length}</div>
+      </header>
+      <div class="meter" style="margin-bottom:14px"><i style="width:${done / steps.length * 100}%"></i></div>
+      ${steps.map(s => `
+        <div class="row" style="cursor:${s.done ? 'default' : 'pointer'};opacity:${s.done ? '.5' : '1'}"
+             ${s.done ? '' : `data-setup="${s.act}"`}>
+          <span class="selbox ${s.done ? 'on' : ''}" style="pointer-events:none">${s.done ? icon('check', 11) : ''}</span>
+          <span class="body">
+            <span class="t1" style="${s.done ? 'text-decoration:line-through' : ''}">${esc(s.label)}</span>
+            <span class="t2">${esc(s.hint)}</span>
+          </span>
+          ${s.done ? '' : `<span class="chip">${s.cta}</span>`}
+        </div>`).join('')}
+    </div>`;
+}
+
+/* ==================== סיכום שבועי ==================== */
+// Monarch, Snoop ו-Emma כולם מציעים את זה, ומאותה סיבה: תמונת החודש
+// גדולה מדי כדי להרגיש, ותנועה בודדת קטנה מדי. השבוע הוא הרזולוציה
+// שבה אפשר עוד לשנות משהו.
+
+function renderRecap() {
+  const host = $('#recap');
+  const rows = live(S.txs).filter(t => flowOf(t.dept) === 'out');
+  if (rows.length < 5) { host.hidden = true; return; }
+
+  const day = 864e5;
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const startThis = new Date(now - 6 * day);
+  const startPrev = new Date(now - 13 * day);
+  const iso = (d) => d.toISOString().slice(0, 10);
+
+  const inRange = (from, to) => rows.filter(t => t.dateBuy >= iso(from) && t.dateBuy <= iso(to));
+  const thisWeek = inRange(startThis, now);
+  const prevWeek = inRange(startPrev, new Date(now - 7 * day));
+  if (!thisWeek.length) { host.hidden = true; return; }
+
+  const sum = (a) => a.reduce((s, t) => s + ils(t), 0);
+  const tw = sum(thisWeek), pw = sum(prevWeek);
+  const diff = pw ? (tw - pw) / pw : null;
+
+  // המחלקה שהזיזה הכי הרבה בין השבועות
+  const byDept = (a) => a.reduce((m, t) => (m[t.dept] = (m[t.dept] || 0) + ils(t), m), {});
+  const A = byDept(prevWeek), B = byDept(thisWeek);
+  const movers = [...new Set([...Object.keys(A), ...Object.keys(B)])]
+    .map(k => ({ k, d: (B[k] || 0) - (A[k] || 0) }))
+    .sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
+  const top = movers[0];
+
+  const biggest = [...thisWeek].sort((a, b) => ils(b) - ils(a))[0];
+
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="sec">
+      <header><h2>שבעת הימים האחרונים</h2>
+        ${diff !== null ? `<div class="aside">${delta(diff)}</div>` : ''}</header>
+      <div class="panel">
+        <div style="font-size:26px;font-weight:660;letter-spacing:-.02em" class="num">${money(tw)}</div>
+        <div class="hint" style="margin-top:4px">
+          ${pw ? `שבוע קודם ${money(pw)}. ` : ''}
+          ${top && top.d ? `<b>${esc(dept(top.k)?.label || top.k)}</b> ${top.d > 0 ? 'עלה' : 'ירד'} ב-${money(Math.abs(top.d))}.` : ''}
+        </div>
+        ${biggest ? `<div class="hint">ההוצאה הגדולה: ${esc(biggest.merchant || catLabel(biggest.dept, biggest.cat))} · ${money(ils(biggest))}</div>` : ''}
+        <div class="hint">${thisWeek.length} תנועות · ממוצע ${money(Math.round(tw / 7))} ליום</div>
+      </div>
+    </div>`;
 }
 
 /* ==================== יתרות ==================== */
@@ -1442,6 +1545,23 @@ function renderLedger() {
     dup: t => t.dupOf,
   };
   if (by[F]) rows = rows.filter(by[F]);
+
+  // סינון מתקדם — טווח תאריכים, טווח סכומים, ותגית
+  const A = S.adv;
+  if (A.from) rows = rows.filter(t => t.dateBuy >= A.from);
+  if (A.to) rows = rows.filter(t => t.dateBuy <= A.to);
+  if (A.min !== null) rows = rows.filter(t => ils(t) >= A.min);
+  if (A.max !== null) rows = rows.filter(t => ils(t) <= A.max);
+  if (A.tag) rows = rows.filter(t => (t.tags || []).includes(A.tag));
+
+  const tags = ST.allTags(S.txs);
+  $('#lg-tags').innerHTML = tags.length
+    ? tags.slice(0, 12).map(t => `<button class="chip ${A.tag === t ? 'on' : ''}" data-advtag="${esc(t)}">#${esc(t)}</button>`).join('')
+    : '<span class="hint" style="margin:0">אין עדיין תגיות</span>';
+
+  const active = !!(A.from || A.to || A.min !== null || A.max !== null || A.tag);
+  $('#lg-adv').open = $('#lg-adv').open || active;
+  $('#lg-adv').querySelector('summary').textContent = active ? 'סינון מתקדם · פעיל' : 'סינון מתקדם';
 
   const spend = live(rows).filter(t => flowOf(t.dept) === 'out').reduce((s, t) => s + ils(t), 0);
   const income = live(rows).filter(t => flowOf(t.dept) === 'in').reduce((s, t) => s + ils(t), 0);
@@ -2318,6 +2438,32 @@ function wire() {
     if (pn) { openPin(pn); return; }
     if (hit('#st-export-enc')) { await doExportEncrypted(); return; }
 
+    /* ---- סינון מתקדם ---- */
+    const advTag = hit('[data-advtag]')?.dataset.advtag;
+    if (advTag) { S.adv.tag = S.adv.tag === advTag ? '' : advTag; renderLedger(); return; }
+    if (hit('#lg-clear')) {
+      S.adv = { from: '', to: '', min: null, max: null, tag: '' };
+      ['lg-from', 'lg-to', 'lg-min', 'lg-max'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+      renderLedger(); return;
+    }
+
+    /* ---- רשימת ההתחלה ---- */
+    const setup = hit('[data-setup]')?.dataset.setup;
+    if (setup) {
+      if (setup === 'set-balances') { openBalances(); return; }
+      if (setup === 'act-shot') { openShot(); return; }
+      S.view = 'settings'; render();
+      // ממתינים לרינדור ואז מקפיצים לשדה הרלוונטי
+      setTimeout(() => {
+        const target = { 'go-accounts': '#st-accounts', 'go-budget': '#st-budget', 'go-key': '#st-key' }[setup];
+        const el = $(target);
+        if (!el) return;
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (el.tagName === 'INPUT') el.focus();
+      }, 260);
+      return;
+    }
+
     /* ---- יתרות ---- */
     if (hit('#edit-balances') || hit('#set-balances')) { openBalances(); return; }
     if (hit('#save-balances')) { await saveBalances(); return; }
@@ -2406,6 +2552,16 @@ function wire() {
   });
 
   $('#q').addEventListener('input', (e) => { S.q = e.target.value; renderLedger(); });
+
+  // סינון מתקדם
+  const advMap = { 'lg-from': 'from', 'lg-to': 'to', 'lg-min': 'min', 'lg-max': 'max' };
+  document.addEventListener('input', (e) => {
+    const key = advMap[e.target.id];
+    if (!key) return;
+    const v = e.target.value.trim();
+    S.adv[key] = (key === 'min' || key === 'max') ? (v === '' ? null : toAgorot(v)) : v;
+    renderLedger();
+  });
 
   $('#add-merch').addEventListener('input', async (e) => {
     if (ADD.touched) return;

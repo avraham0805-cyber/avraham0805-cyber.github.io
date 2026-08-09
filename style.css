@@ -283,6 +283,17 @@ table.tbl tfoot td { font-weight: 660; border-top: 1px solid var(--rule-2); bord
 .row .amt.in { color: var(--delta-up); }
 .row .amt.neutral { color: var(--ink-3); }
 
+#lg-adv { margin: 4px 0 12px; }
+#lg-adv summary {
+  cursor: pointer; font-size: 12.5px; color: var(--ink-3); padding: 6px 2px;
+  list-style: none; user-select: none;
+}
+#lg-adv summary::-webkit-details-marker { display: none; }
+#lg-adv summary::before { content: '＋ '; }
+#lg-adv[open] summary::before { content: '－ '; }
+#lg-adv[open] summary { color: var(--ink-2); font-weight: 600; }
+#lg-adv > *:not(summary) { animation: fade .16s ease; }
+
 .selbox {
   width: 19px; height: 19px; flex: 0 0 19px; border-radius: 5px;
   border: 1.5px solid var(--rule-2); display: grid; place-items: center;
