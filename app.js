@@ -2618,7 +2618,15 @@ function wire() {
       await DB.snapshot('לפני ייבוא');
       const st = await DB.importAll(data);
       await ensureAccounts(); await reload();
-      toast(st.dropped ? `יובאו ${st.tx} תנועות · ${st.dropped} נדחו` : `יובאו ${st.tx} תנועות`, 3200);
+      // הוצאות קבועות שיובאו חייבות להירשם כבר החודש. בלי זה הן יושבות
+      // בהגדרות ולא מופיעות בשום מקום עד ההפעלה הבאה — נראה כמו ייבוא שנכשל.
+      if (st.fixed) { await applyFixedForMonth(curMonth()); await reload(); }
+      const parts = [];
+      if (st.tx) parts.push(`${st.tx} תנועות`);
+      if (st.fixed) parts.push(`${st.fixed} הוצאות קבועות`);
+      if (st.budgets) parts.push(`${st.budgets} תקציבים`);
+      if (st.accounts) parts.push(`${st.accounts} חשבונות`);
+      toast(parts.length ? `יובאו ${parts.join(' · ')}` : 'לא נמצא מה לייבא', 3600);
       render();
     } catch (err) { toast('ייבוא נכשל: ' + err.message, 3500); }
   });

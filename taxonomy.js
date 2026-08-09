@@ -55,12 +55,15 @@ export const DEPTS = [
     { key: 'general',   label: 'כללי — בריאות',        kind: 'variable', need: 'essential' },
   ]},
 
-  { key: 'family', label: 'משפחה וילדים', icon: 'family', slot: 4, flow: 'out', cats: [
+  { key: 'family', label: 'משפחה וקהילה', icon: 'family', slot: 4, flow: 'out', cats: [
     { key: 'daycare',  label: 'גן / צהרון / חינוך', kind: 'fixed',    need: 'essential' },
     { key: 'classes',  label: 'חוגים',              kind: 'fixed',    need: 'discretionary' },
     { key: 'kidcloth', label: 'ביגוד ילדים',        kind: 'variable', need: 'essential' },
     { key: 'sitter',   label: 'בייביסיטר',          kind: 'variable', need: 'discretionary' },
     { key: 'support',  label: 'העברות משפחתיות',    kind: 'fixed',    need: 'essential' },
+    // תרומה קבועה היא התחייבות, לא מנוי — לכן essential, כדי שלא תופיע
+    // ברשימת "מנויים שאפשר לבטל" לצד נטפליקס
+    { key: 'donation', label: 'תרומות ומעשר',       kind: 'fixed',    need: 'essential' },
     { key: 'general',  label: 'כללי — משפחה',       kind: 'variable', need: 'essential' },
   ]},
 
