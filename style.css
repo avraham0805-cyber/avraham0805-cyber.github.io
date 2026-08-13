@@ -46,35 +46,38 @@
   --nav-h: 58px;
 }
 
+/* מצב כהה — טרמינל פיננסי: שחור-כחלחל עמוק, משטחים מורמים בקו אור דק,
+   והסדרות המאומתות נשארות כמו שהן. הניטרלים קרים בכוונה — חום נראה ביתי,
+   קור נראה מקצועי. */
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --plane: #0d0d0d; --surface: #1a1a19; --surface-sunk: #131312; --surface-hi: #222220;
-    --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #898781;
-    --rule: #2c2c2a; --rule-2: #383835; --ring: rgba(255,255,255,.10);
+    --plane: #090b0f; --surface: #11141a; --surface-sunk: #0d0f14; --surface-hi: #191d26;
+    --ink: #f2f4f8; --ink-2: #b7bec9; --ink-3: #7c8493;
+    --rule: #1f242e; --rule-2: #2e3542; --ring: rgba(120,160,255,.16);
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
     --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
     --q1: #0d366b; --q2: #104281; --q3: #184f95; --q4: #1c5cab;
     --q5: #256abf; --q6: #2a78d6; --q7: #3987e5; --q8: #5598e7; --q9: #6da7ec;
-    --delta-up: #0ca30c;
-    --pos: #3987e5; --neg: #e66767;
-    --accent: #3987e5;
-    --accent-ink: #08131f;
+    --delta-up: #22c55e;
+    --pos: #3987e5; --neg: #f87171;
+    --accent: #4d9aff;
+    --accent-ink: #06101f;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --plane: #0d0d0d; --surface: #1a1a19; --surface-sunk: #131312; --surface-hi: #222220;
-  --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #898781;
-  --rule: #2c2c2a; --rule-2: #383835; --ring: rgba(255,255,255,.10);
+  --plane: #090b0f; --surface: #11141a; --surface-sunk: #0d0f14; --surface-hi: #191d26;
+  --ink: #f2f4f8; --ink-2: #b7bec9; --ink-3: #7c8493;
+  --rule: #1f242e; --rule-2: #2e3542; --ring: rgba(120,160,255,.16);
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
   --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
   --q1: #0d366b; --q2: #104281; --q3: #184f95; --q4: #1c5cab;
   --q5: #256abf; --q6: #2a78d6; --q7: #3987e5; --q8: #5598e7; --q9: #6da7ec;
-  --delta-up: #0ca30c;
-  --pos: #3987e5; --neg: #e66767;
-  --accent: #3987e5;
-  --accent-ink: #08131f;
+  --delta-up: #22c55e;
+  --pos: #3987e5; --neg: #f87171;
+  --accent: #4d9aff;
+  --accent-ink: #06101f;
 }
 
 /* ---------- בסיס ---------- */
@@ -561,3 +564,81 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
 }
 .calgrid .calcell.has { border-color: var(--s1); background: color-mix(in srgb, var(--s1) 7%, var(--surface)); }
 .calgrid .calcell.today { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* ============================================================
+   גימור פרימיום — עומק, זכוכית ותנועה.
+   העיקרון: תנועה קצרה ומכובדת (180-260ms), עומק דרך קווי אור
+   דקים ולא דרך צללים כבדים, ואפס קישוט שאין לו תפקיד.
+   ============================================================ */
+
+/* כניסת מסך — עלייה עדינה, לא זינוק */
+.view.on { animation: viewin .24s cubic-bezier(.2,.8,.3,1); }
+@keyframes viewin {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .view.on { animation: none; }
+}
+
+/* הלוח — קו אור עליון וזוהר כחול עמוק במצב כהה */
+.board {
+  border: 1px solid rgba(255,255,255,.07);
+  background:
+    linear-gradient(168deg, #171b23 0%, #10131a 55%, #0d1017 100%);
+}
+.board::before {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(120,170,255,.45), transparent);
+}
+:root[data-theme="light"] .board::before { background: linear-gradient(90deg, transparent, rgba(120,170,255,.25), transparent); }
+.board .fig { animation: figin .5s cubic-bezier(.2,.8,.3,1); }
+@keyframes figin {
+  from { opacity: 0; transform: translateY(5px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ניווט תחתון — זכוכית עם גלולת-פעיל */
+.tabbar {
+  background: color-mix(in srgb, var(--plane) 78%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border-top: 1px solid var(--rule);
+}
+.tabbar button { position: relative; transition: color .16s; }
+.tabbar button.on::before {
+  content: ''; position: absolute; inset: 4px 6px; border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  z-index: -1;
+}
+.tabbar button.on { color: var(--accent); }
+
+/* מגירות — זכוכית כהה + צל עומק אחד */
+.sheet .card {
+  border-top: 1px solid rgba(255,255,255,.09);
+  box-shadow: 0 -18px 60px -24px rgba(0,0,0,.65);
+}
+.sheet .veil {
+  background: color-mix(in srgb, var(--plane) 55%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+/* משטחים — קו אור עליון עדין שמרים אותם מהרקע */
+.panel, .tile {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+}
+:root[data-theme="light"] .panel, :root[data-theme="light"] .tile { box-shadow: none; }
+
+/* לחיצות — משוב מגע קצר בכל האפליקציה */
+.row:active, .chip:active, .quick:active, .btn:active, .tabbar button:active {
+  transform: scale(.982);
+  transition: transform .08s;
+}
+
+/* פוקוס נראה — עבודה במקלדת נראית מקצועית, לא נשכחת */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}

@@ -113,7 +113,8 @@ async function init() {
   S.lastExport = await DB.setting('lastExport', 0);
   S.hasKey = await DB.hasSecret('geminiKey');
   S.autoLock = await DB.setting('autoLockMin', 0);
-  const theme = await DB.setting('theme', 'auto');
+  // כהה כברירת מחדל — זה מוצר פיננסי, לא מסמך. בהיר נשאר זמין בהגדרות.
+  const theme = await DB.setting('theme', 'dark');
   applyTheme(theme);
   armAutoLock();
 
