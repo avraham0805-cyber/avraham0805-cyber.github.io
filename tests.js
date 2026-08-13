@@ -1,6 +1,17 @@
 // חבילת בדיקות — רצה בדפדפן מול המודולים האמיתיים, בלי מוקים.
 // כל בדיקה מאמתת התנהגות שמישהו יכול לשבור, לא שהקוד קיים.
 
+// ⛔ הבדיקות מוחקות ומשכתבות את בסיס הנתונים. על הדומיין החי זה בסיס
+// הנתונים האמיתי של המשתמש — פתיחת הדף שם הייתה מוחקת לו את הכל.
+const HOST = location.hostname;
+if (HOST !== 'localhost' && HOST !== '127.0.0.1' && !HOST.endsWith('.localhost')) {
+  document.body.innerHTML = `<div style="max-width:480px;margin:80px auto;font-family:system-ui;padding:0 20px;line-height:1.6">
+    <h1 style="font-size:20px">הבדיקות לא רצות כאן</h1>
+    <p>חבילת הבדיקות מוחקת ומשכתבת נתונים, ולכן היא מריצה את עצמה רק בסביבת
+    פיתוח מקומית — לעולם לא על הכתובת שבה שמורים נתונים אמיתיים.</p></div>`;
+  throw new Error('tests blocked on production host');
+}
+
 import * as DB from './db.js';
 import * as Crypto from './crypto.js';
 import * as AI from './ai.js';

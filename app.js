@@ -1941,10 +1941,12 @@ async function renderSettings() {
   $('#st-budget').value = S.budget ? S.budget / 100 : '';
   $('#st-key').value = S.hasKey ? '••••••••••••••••' : '';
   $('#st-key').placeholder = S.hasKey ? 'מפתח שמור ומוצפן' : 'AIza…';
-  // BUILD מוחלף בזמן הפריסה בגיבוב הקומיט. אם הוא נשאר כמות שהוא —
-  // זו הרצה מקומית ולא גרסה שנפרסה.
-  const BUILD = '__BUILD__';
-  $('#st-version').textContent = BUILD.startsWith('__') ? 'כסף · מקומי' : `כסף · ${BUILD}`;
+  // גרסה = מתי הקובץ שנטען נבנה בשרת. document.lastModified משקף את
+  // זמן הפריסה בלי שום תשתית — ועונה על "איזו גרסה באמת רצה אצלי".
+  const lm = new Date(document.lastModified);
+  const stamp = isNaN(lm) ? '' :
+    ` · עודכן ${String(lm.getDate()).padStart(2, '0')}.${String(lm.getMonth() + 1).padStart(2, '0')} ${String(lm.getHours()).padStart(2, '0')}:${String(lm.getMinutes()).padStart(2, '0')}`;
+  $('#st-version').textContent = 'כסף' + stamp;
 
   const pinOn = !!(await DB.setting('dekWrapped'));
   $('#st-security').innerHTML = `
