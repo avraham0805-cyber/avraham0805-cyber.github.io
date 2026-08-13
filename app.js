@@ -40,6 +40,10 @@ const money = (agorot) => {
   return (agorot < 0 ? '−₪' : '₪') + s;
 };
 const money0 = (agorot) => '₪' + Math.round(Math.abs(agorot || 0) / 100).toLocaleString('he-IL');
+const moneyShort = (agorot) => {
+  const v = Math.abs(agorot || 0) / 100;
+  return v >= 10000 ? '₪' + (v / 1000).toFixed(0) + 'K' : money0(agorot);
+};
 const heroFig = (agorot) => {
   const v = Math.abs(agorot || 0) / 100;
   return `${agorot < 0 ? '−' : ''}<span class="cur">₪</span>${v.toLocaleString('he-IL', { maximumFractionDigits: 0 })}`;
@@ -387,9 +391,173 @@ function render() {
   $$('nav.tabbar button[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === S.view));
   C.hideTip();
   ({
-    home: renderHome, analysis: renderAnalysis,
+    home: renderHome, analysis: renderAnalysis, reports: renderReports,
     insights: renderInsights, ledger: renderLedger, settings: renderSettings,
   })[S.view]();
+}
+
+/* ==================== מסך: דוחות ==================== */
+
+function renderReports() {
+  S.insights ||= IN.analyze(S.txs);
+  $('#rp-meta').textContent = `${monthLabel(curMonth())} · ${live(S.txs).length} תנועות מתועדות`;
+  renderMonthClose();
+  renderChargeCalendar();
+  renderNetWorthChart();
+  renderSavingsRate();
+  renderWealth();
+  renderTradingPnL();
+}
+
+/** סגירת חודש — החודש הקודם שהסתיים, בקצרה של דוח */
+function renderMonthClose() {
+  const host = $('#rep-close');
+  const m = shiftMonth(curMonth(), -1);
+  const st = statsFor(m);
+  $('#rep-close-aside').textContent = monthLabel(m);
+  if (!st.count) { host.innerHTML = '<div class="empty">אין נתונים לחודש שעבר — הדוח יופיע כשיהיה חודש מלא מאחוריך.</div>'; return; }
+  const a = ST.attribution(S.txs, shiftMonth(m, -1), m);
+  const sr = ST.savingsRateSeries(S.txs, 2).find(r => r.month === m);
+  const biggest = live(S.txs.filter(t => t.month === m && flowOf(t.dept) === 'out'))
+    .sort((x, y) => ils(y) - ils(x))[0];
+  host.innerHTML = `
+    <div class="tiles" style="margin-bottom:12px">
+      <div class="tile"><div class="k">יצא</div><div class="v num">${money0(st.out)}</div></div>
+      <div class="tile"><div class="k">נכנס</div><div class="v num" style="color:var(--delta-up)">${money0(st.in)}</div></div>
+      <div class="tile"><div class="k">נטו</div><div class="v num" style="color:${st.net >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${st.net < 0 ? '−' : '+'}${money0(Math.abs(st.net))}</div></div>
+    </div>
+    <div class="rows">
+      ${a.parts.length ? `<div class="row" style="cursor:default"><span class="body">
+        <span class="t1">מול החודש שקדם: ${a.delta === 0 ? 'ללא שינוי' : `${a.delta > 0 ? 'עלייה' : 'ירידה'} של ${money(Math.abs(a.delta))}`}</span>
+        <span class="t2">${a.parts[0] ? `הגורם הגדול: ${esc(a.parts[0].label)} (${a.parts[0].delta > 0 ? '+' : '−'}${money0(Math.abs(a.parts[0].delta))})` : ''}</span>
+      </span></div>` : ''}
+      ${sr?.rate !== null && sr ? `<div class="row" style="cursor:default"><span class="body">
+        <span class="t1">שיעור חיסכון: ${Math.round((sr.rate || 0) * 100)}%</span>
+        <span class="t2">${money0(sr.saved)} הופנו לחיסכון מתוך ${money0(sr.income)} הכנסה</span>
+      </span></div>` : ''}
+      ${biggest ? `<div class="row" data-merch="${esc(biggest.merchant || '')}"><span class="body">
+        <span class="t1">ההוצאה הגדולה: ${esc(biggest.merchant || catLabel(biggest.dept, biggest.cat))}</span>
+        <span class="t2">${money(ils(biggest))} · ${esc(pathLabel(biggest.dept, biggest.cat))}</span>
+      </span></div>` : ''}
+    </div>`;
+}
+
+/** לוח חיובים — 30 הימים הקרובים על גריד החודש */
+function renderChargeCalendar() {
+  const host = $('#rep-cal');
+  const up = ST.upcoming(S.txs, S.insights.recurring || [], S.fixed, 30);
+  $('#rep-cal-aside').innerHTML = up.total ? `<b class="num">${money0(up.total)}</b>` : '';
+  if (!up.items.length) { host.innerHTML = '<div class="empty">אין חיובים ידועים קדימה</div>'; return; }
+  const m = curMonth();
+  const byDay = new Map();
+  for (const it of up.items) {
+    if (!it.date.startsWith(m)) continue;      // הגריד מציג את החודש הנוכחי
+    const d = +it.date.slice(8);
+    if (!byDay.has(d)) byDay.set(d, { total: 0, items: [] });
+    const e = byDay.get(d);
+    e.total += it.amount;
+    e.items.push(`${it.label} · ${money0(it.amount)}`);
+  }
+  host.replaceChildren(C.monthGrid(m, byDay, { fmt: moneyShort, today: new Date().getDate() }));
+  const rest = up.items.filter(it => !it.date.startsWith(m));
+  if (rest.length) {
+    const note = document.createElement('div');
+    note.className = 'hint';
+    note.textContent = `ועוד ${rest.length} חיובים בתחילת החודש הבא · ${money0(rest.reduce((s, x) => s + x.amount, 0))}`;
+    host.appendChild(note);
+  }
+}
+
+function renderNetWorthChart() {
+  const host = $('#rep-nw');
+  const s = ST.netWorthSeries(S.txs, S.accounts, 12);
+  if (s.length < 2) {
+    $('#rep-nw-aside').textContent = '';
+    host.innerHTML = '<div class="empty">עגן יתרות בחשבונות כדי לראות את השווי הנקי מצטבר לאורך זמן.</div>';
+    return;
+  }
+  const first = s[0].total, last = s.at(-1).total;
+  // הפרש מוחלט ולא אחוז: נקודת פתיחה קטנה מנפחת אחוזים לחסרי משמעות
+  const diff = last - first;
+  $('#rep-nw-aside').innerHTML = `<b class="num">${money0(last)}</b>
+    <span class="num" style="color:${diff >= 0 ? 'var(--delta-up)' : 'var(--neg)'};font-size:12px;font-weight:620">
+    ${diff >= 0 ? '▲' : '▼'} ${money0(Math.abs(diff))}</span>`;
+  host.replaceChildren(C.line(s.map(p => ({ label: monthShort(p.month), value: p.total })), { fmt: money0 }));
+  const note = document.createElement('div');
+  note.className = 'hint';
+  note.innerHTML = `מ-${monthLabel(s[0].month)}: ${last >= first ? 'גדילה' : 'ירידה'} של <b>${money(Math.abs(last - first))}</b>. מחושב מעוגני היתרות + כל תנועה מתועדת.`;
+  host.appendChild(note);
+}
+
+function renderSavingsRate() {
+  const host = $('#rep-sr');
+  const rows = ST.savingsRateSeries(S.txs, 6).filter(r => r.income || r.saved);
+  if (!rows.length) { $('#rep-sr-aside').textContent = ''; host.innerHTML = '<div class="empty">אין עדיין הכנסות מתועדות</div>'; return; }
+  const cur = rows.at(-1);
+  $('#rep-sr-aside').innerHTML = cur.rate !== null ? `<b class="num">${Math.round(cur.rate * 100)}%</b> החודש` : '';
+  host.replaceChildren(C.columns(
+    rows.map(r => ({
+      label: monthShort(r.month),
+      value: Math.round((r.rate || 0) * 100),
+      sub: `${money0(r.saved)} מתוך ${money0(r.income)}`,
+      current: r.month === curMonth(),
+    })), { fmt: (v) => v + '%' },
+  ));
+}
+
+function renderWealth() {
+  const host = $('#rep-wealth');
+  const dests = ST.wealthByDestination(S.txs);
+  if (!dests.length) {
+    $('#rep-wealth-aside').textContent = '';
+    host.innerHTML = '<div class="empty">אין עדיין העברות לחיסכון והשקעה. ההוצאות הקבועות מסוג ״הפקדה להשקעות״ יופיעו כאן מעצמן.</div>';
+    return;
+  }
+  const total = dests.reduce((s, d) => s + d.total, 0);
+  $('#rep-wealth-aside').innerHTML = `<b class="num">${money0(total)}</b> נצבר`;
+  const goals = Object.fromEntries(S.budgets.filter(b => b.key.startsWith('goal:')).map(b => [b.key.slice(5), b.amount]));
+  host.innerHTML = dests.map(d => {
+    const goal = goals[d.name] || 0;
+    const p = goal ? Math.min(100, Math.round(d.total / goal * 100)) : 0;
+    return `<div class="row" style="cursor:default;align-items:flex-start">
+      <span style="flex:1;min-width:0">
+        <span style="display:flex;align-items:baseline;gap:9px">
+          <span style="flex:1;font-size:13.5px;font-weight:560">${esc(d.name)}</span>
+          <span class="num" style="font-size:11.5px;color:var(--ink-3)">${d.monthly ? money0(d.monthly) + ' לחודש' : ''}</span>
+          <span class="num" style="font-size:14px;font-weight:640">${money(d.total)}</span>
+        </span>
+        ${goal ? `<span class="cellbar" style="height:5px"><i style="width:${p}%;background:var(--good)"></i></span>
+          <span style="display:block;font-size:11px;color:var(--ink-3);margin-top:3px">${p}% מהיעד ${money0(goal)}</span>`
+        : `<span style="display:block;font-size:11px;color:var(--ink-3);margin-top:3px">
+            ${d.monthly ? `בקצב הזה: ${money0(d.projectedYearEnd)} עד סוף השנה · ` : ''}מאז ${monthLabel(d.first)}</span>`}
+      </span>
+      <button class="chip" data-goal="${esc(d.name)}">${goal ? 'שנה יעד' : 'קבע יעד'}</button>
+    </div>`;
+  }).join('');
+}
+
+function renderTradingPnL() {
+  const host = $('#rep-trading');
+  const p = ST.tradingPnL(S.txs, 12);
+  if (!p.rows.length) {
+    $('#rep-tr-aside').textContent = '';
+    host.innerHTML = '<div class="empty">אין עדיין פעילות מסחר מתועדת — עלויות במחלקת ״מסחר ועסק״ ומשיכות רווח יופיעו כאן.</div>';
+    return;
+  }
+  $('#rep-tr-aside').innerHTML = `<b class="num" style="color:${p.net >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${p.net < 0 ? '−' : '+'}${money0(Math.abs(p.net))}</b> מצטבר`;
+  host.innerHTML = table(
+    [{ label: 'חודש' }, { label: 'משיכות', n: true }, { label: 'עלויות', n: true }, { label: 'נטו', n: true }],
+    p.rows.map(r => ({
+      cells: [
+        monthShort(r.month),
+        `<span class="num">${r.income ? money0(r.income) : '—'}</span>`,
+        `<span class="num">${r.cost ? money0(r.cost) : '—'}</span>`,
+        `<span class="num" style="color:${r.net >= 0 ? 'var(--delta-up)' : 'var(--neg)'}">${r.net < 0 ? '−' : '+'}${money0(Math.abs(r.net))}</span>`,
+      ],
+    })),
+    { foot: ['סה״כ', `<span class="num">${money0(p.income)}</span>`, `<span class="num">${money0(p.cost)}</span>`,
+      `<span class="num">${p.net < 0 ? '−' : '+'}${money0(Math.abs(p.net))}</span>`] },
+  ) + '<div class="hint">משיכות רווח (payout, דיבידנד) מול כל עלויות מחלקת המסחר — פלטפורמות, דאטה, resets ועמלות.</div>';
 }
 
 /* ==================== רכיבי סטטיסטיקה ==================== */
@@ -1030,9 +1198,12 @@ function openBudgets() {
 }
 
 async function saveBudgets() {
-  // עוגן הגלגול נשמר מהקיים כדי שעריכת סכום לא תאפס את הצבירה
+  // עוגן הגלגול נשמר מהקיים כדי שעריכת סכום לא תאפס את הצבירה,
+  // ויעדי goal: חיים באותו מחסן — מחיקה גורפת הייתה מוחקת אותם בשקט
   const prev = Object.fromEntries(S.budgets.map(b => [b.key, b.since]));
+  const goals = S.budgets.filter(b => b.key.startsWith('goal:'));
   await DB.clear('budgets');
+  if (goals.length) await DB.putMany('budgets', goals);
   const rows = [];
   for (const el of $$('[data-budget]')) {
     const amount = toAgorot(el.value);
@@ -1151,6 +1322,166 @@ function openRules() {
   openSheet('sh-rules');
 }
 
+/* ==================== מגירת בית עסק ==================== */
+// כל שם בית עסק ברשימות הוא דלת: היסטוריה, ממוצע, מגמה, והחוק שחל עליו.
+
+let MERCH = null;
+
+function openMerchant(name) {
+  if (!name) return;
+  MERCH = name;
+  const key = DB.normMerchant(name);
+  const rows = live(S.txs).filter(t => DB.normMerchant(t.merchant) === key)
+    .sort((a, b) => b.dateBuy.localeCompare(a.dateBuy));
+  if (!rows.length) return;
+
+  const vals = rows.map(t => ils(t));
+  const total = vals.reduce((s, v) => s + v, 0);
+  const byMonth = new Map();
+  for (const t of rows) byMonth.set(t.month, (byMonth.get(t.month) || 0) + ils(t));
+  const series = ST.monthsRange(curMonth(), 6).map(m => byMonth.get(m) || 0);
+  const rule = S.rules.find(r => r.key === key);
+  const t0 = rows[0];
+
+  $('#merch-title').textContent = name;
+  $('#merch-body').innerHTML = `
+    <div class="tiles" style="margin-bottom:12px">
+      <div class="tile"><div class="k">סה״כ</div><div class="v num">${money0(total)}</div></div>
+      <div class="tile"><div class="k">תנועות</div><div class="v num">${rows.length}</div></div>
+      <div class="tile"><div class="k">חציון</div><div class="v num">${money0(ST.median(vals))}</div></div>
+    </div>
+    <div class="panel" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="flex:1;font-size:12.5px;color:var(--ink-2)">6 חודשים אחרונים</span>
+        ${C.sparkline(series, { width: 120, height: 26 }).outerHTML}
+      </div>
+      <div class="hint" style="margin-top:8px">
+        מסווג: <b>${esc(pathLabel(t0.dept, t0.cat))}</b>
+        ${rule ? ` · חוק פעיל (הוחל ${rule.hits || 0} פעמים)` : ' · אין חוק — כל תנועה מסווגת לבד'}
+      </div>
+    </div>
+    <div class="rows" style="margin-bottom:12px">${rows.slice(0, 8).map(t => txRow(t)).join('')}</div>
+    ${rows.length > 8 ? `<div class="hint">ועוד ${rows.length - 8} — הכפתור למטה מסנן את כולן</div>` : ''}
+    <div class="btnrow">
+      <button class="btn ghost sm" data-merch-act="recat">${icon('gear')}סווג מחדש הכל</button>
+      <button class="btn ghost sm" data-merch-act="rename">${icon('list')}שנה שם</button>
+      <button class="btn ghost sm" data-merch-act="filter">${icon('search')}סנן בתנועות</button>
+    </div>`;
+  openSheet('sh-merch');
+}
+
+async function merchantAction(act) {
+  const key = DB.normMerchant(MERCH);
+  const rows = S.txs.filter(t => DB.normMerchant(t.merchant) === key);
+  if (act === 'recat') { openCatPicker({ merch: MERCH }, `${rows[0].dept}/${rows[0].cat}`); return; }
+  if (act === 'filter') {
+    closeSheet('sh-merch');
+    S.q = MERCH; S.view = 'ledger'; render();
+    setTimeout(() => { const q = $('#q'); if (q) q.value = MERCH; }, 120);
+    return;
+  }
+  if (act === 'rename') {
+    const name = (prompt('שם חדש לבית העסק:', MERCH) || '').trim().slice(0, 80);
+    if (!name || name === MERCH) return;
+    await DB.snapshot('לפני שינוי שם');
+    for (const t of rows) t.merchant = name;
+    await DB.saveTxMany(rows);
+    const rule = S.rules.find(r => r.key === key);
+    if (rule) { await DB.del('rules', key); await DB.learn(name, rule); }
+    await reload();
+    toast(`שונה שם ל-${rows.length} תנועות`);
+    openMerchant(name);
+    render();
+  }
+}
+
+/* ==================== שאל את הכסף ==================== */
+
+function askContext() {
+  const months = ST.monthsRange(curMonth(), 3);
+  const perMonth = months.map(m => {
+    const st = statsFor(m);
+    return {
+      חודש: m, יצא: Math.round(st.out / 100), נכנס: Math.round(st.in / 100),
+      לפי_מחלקה: Object.fromEntries(Object.entries(st.byDept)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => [dept(k)?.label || k, Math.round(v / 100)])),
+    };
+  });
+  const st = statsFor(curMonth());
+  const up = ST.upcoming(S.txs, S.insights?.recurring || [], S.fixed, 30);
+  const bal = ST.balances(S.txs, S.accounts.filter(a => a.active !== false));
+  const bud = ST.budgetStatus(S.txs, S.budgets, curMonth());
+  return JSON.stringify({
+    היום: todayISO(),
+    חודשים: perMonth,
+    בתי_עסק_מובילים_החודש: Object.fromEntries(Object.entries(st.byMerchant)
+      .sort((a, b) => b[1] - a[1]).slice(0, 12)
+      .map(([k, v]) => [k, Math.round(v / 100)])),
+    תקציבים: bud.items.map(i => ({ קטגוריה: i.label, תקציב: Math.round(i.amount / 100), נוצל: Math.round(i.spent / 100) })),
+    עומד_לרדת_30_יום: Math.round(up.total / 100),
+    שווי_נקי: bal.covered ? Math.round(bal.netWorth / 100) : null,
+    הכל_בשקלים: true,
+  });
+}
+
+async function runAsk() {
+  const q = $('#ask-q').value.trim();
+  const out = $('#ask-a');
+  if (!q) return;
+  if (!S.hasKey) {
+    out.innerHTML = `<div class="note warn">${icon('key')}<span class="grow">צריך מפתח Gemini — הגדרות ← מפתח</span></div>`;
+    return;
+  }
+  out.innerHTML = `<div class="note info"><div class="spinner"></div><span>חושב…</span></div>`;
+  try {
+    const a = await AI.ask(q, askContext());
+    out.innerHTML = `<div class="panel" style="margin-top:10px;white-space:pre-wrap;font-size:14px;line-height:1.55">${esc(a)}</div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="note bad">${icon('alert')}<span class="grow">${esc(e.message)}</span></div>`;
+  }
+}
+
+/* ==================== דוח חודשי להורדה ==================== */
+
+function buildMonthReport(m) {
+  const st = statsFor(m);
+  const sr = ST.savingsRateSeries(S.txs, 13).find(r => r.month === m);
+  const rows = live(S.txs.filter(t => t.month === m));
+  const out = rows.filter(t => flowOf(t.dept) === 'out').sort((a, b) => ils(b) - ils(a));
+  const fmtN = (ag) => (ag / 100).toLocaleString('he-IL', { maximumFractionDigits: 0 });
+  const deptRows = Object.entries(st.byDept).sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<tr><td>${esc(dept(k)?.label || k)}</td><td class="n">₪${fmtN(v)}</td><td class="n">${pct(v, st.out)}%</td></tr>`).join('');
+  const merchRows = Object.entries(st.byMerchant).sort((a, b) => b[1] - a[1]).slice(0, 15)
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">₪${fmtN(v)}</td></tr>`).join('');
+  const bigRows = out.slice(0, 10)
+    .map(t => `<tr><td>${t.dateBuy.slice(8)}.${t.dateBuy.slice(5, 7)}</td><td>${esc(t.merchant || pathLabel(t.dept, t.cat))}</td><td class="n">₪${fmtN(ils(t))}</td></tr>`).join('');
+  return `<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8">
+<title>דוח כסף · ${monthLabel(m)}</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;padding:32px 20px;color:#111;background:#fff;line-height:1.5}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:14px;margin:26px 0 8px;color:#666;text-transform:uppercase;letter-spacing:.06em}
+.k{display:flex;gap:14px;margin:18px 0}.k div{flex:1;border:1px solid #e3e3e3;border-radius:10px;padding:12px}
+.k b{display:block;font-size:20px;margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}td{padding:6px 4px;border-bottom:1px solid #eee}
+td.n{text-align:left;font-variant-numeric:tabular-nums;white-space:nowrap}
+.muted{color:#888;font-size:12px}
+</style></head><body>
+<h1>דוח חודשי · ${monthLabel(m)}</h1>
+<div class="muted">הופק ${todayISO()} · כסף — מעקב הוצאות</div>
+<div class="k">
+  <div>יצא<b>₪${fmtN(st.out)}</b></div>
+  <div>נכנס<b>₪${fmtN(st.in)}</b></div>
+  <div>נטו<b>${st.net < 0 ? '−' : ''}₪${fmtN(Math.abs(st.net))}</b></div>
+  ${sr && sr.rate !== null ? `<div>שיעור חיסכון<b>${Math.round(sr.rate * 100)}%</b></div>` : ''}
+</div>
+<h2>לפי מחלקה</h2><table>${deptRows}</table>
+<h2>בתי העסק הגדולים</h2><table>${merchRows}</table>
+<h2>עשר ההוצאות הגדולות</h2><table>${bigRows}</table>
+<div class="muted" style="margin-top:26px">${st.count} תנועות בחודש זה. הדוח כולל סיכומים בלבד.</div>
+</body></html>`;
+}
+
 /* ==================== מסך: ניתוח ==================== */
 
 function renderAnalysis() {
@@ -1205,9 +1536,12 @@ function renderAnalysis() {
   const merch = Object.entries(st.byMerchant).sort((a, b) => b[1] - a[1]).slice(0, 12);
   $('#an-merchants').innerHTML = merch.length ? table(
     [{ label: 'בית עסק' }, { label: 'סכום', n: true }, { label: 'חלק', n: true }],
-    merch.map(([name, v]) => ({ cells: [esc(name), `<span class="num">${money(v)}</span>`, `<span class="num">${pct(v, st.out)}%</span>`] })),
+    merch.map(([name, v]) => ({
+      click: true, data: `data-merch="${esc(name)}"`,
+      cells: [esc(name), `<span class="num">${money(v)}</span>`, `<span class="num">${pct(v, st.out)}%</span>`],
+    })),
     { foot: ['סה״כ', `<span class="num">${money(st.out)}</span>`, '100%'] },
-  ) : '<div class="empty">אין נתונים</div>';
+  ) + '<div class="hint">געו בבית עסק להיסטוריה, מגמה ופעולות עליו.</div>' : '<div class="empty">אין נתונים</div>';
 
   // תשלומים
   const open = live(S.txs).filter(t => t.installment && t.installment.of > t.installment.n && flowOf(t.dept) === 'out');
@@ -1817,6 +2151,18 @@ async function onCatPicked(dk, ck) {
     SEL.clear();
     return;
   }
+  if (catTarget?.merch) {
+    const key = DB.normMerchant(catTarget.merch);
+    const rows = S.txs.filter(t => DB.normMerchant(t.merchant) === key);
+    await DB.snapshot('לפני סיווג בית עסק');
+    for (const t of rows) { t.dept = dk; t.cat = ck; Object.assign(t, defaultsFor(dk, ck)); }
+    await DB.saveTxMany(rows);
+    await DB.learn(catTarget.merch, { dept: dk, cat: ck, ...defaultsFor(dk, ck) });
+    await reload();
+    toast(`${rows.length} תנועות סווגו · החוק עודכן`);
+    openMerchant(catTarget.merch);
+    return;
+  }
   if (catTarget === 'rule' && RULE_EDIT) {
     const r = S.rules.find(x => x.key === RULE_EDIT);
     if (r) { await DB.put('rules', { ...r, dept: dk, cat: ck }); await reload(); }
@@ -2039,6 +2385,7 @@ function openTx(id) {
     </div>
     ${t.needsReview ? `<button class="btn accent" data-tx-act="ok" style="margin-bottom:9px">${icon('check')}אשר ונקה מהתור</button>` : ''}
     <button class="btn ghost" data-tx-act="edit" style="margin-bottom:9px">עריכה</button>
+    ${t.merchant ? `<button class="btn ghost" data-tx-act="merch" style="margin-bottom:9px">כל התנועות מ${esc(t.merchant)}</button>` : ''}
     ${flowOf(t.dept) === 'out' && !t.splitOf && !t.installment
       ? '<button class="btn ghost" data-tx-act="split" style="margin-bottom:9px">פיצול בין קטגוריות</button>' : ''}
     ${t.installment ? '<div class="hint" style="margin-bottom:9px">תנועה בתשלומים אינה ניתנת לפיצול — הפיצול היה מנתק אותה מלוח התשלומים ומהתחייבויות העתיד.</div>' : ''}
@@ -2055,6 +2402,12 @@ async function txAction(action, id) {
     await DB.del('tx', id); await reload(); closeSheet('sh-tx'); toast('נמחק'); render(); return;
   }
   if (action === 'split') { closeSheet('sh-tx'); openSplit(id); return; }
+  if (action === 'merch') {
+    const t = S.txs.find(x => x.id === id);
+    closeSheet('sh-tx');
+    if (t?.merchant) openMerchant(t.merchant);
+    return;
+  }
   if (action === 'edit') {
     closeSheet('sh-tx');
     openAdd({
@@ -2487,6 +2840,33 @@ function wire() {
       return;
     }
 
+    /* ---- בית עסק ---- */
+    const merch = hit('[data-merch]')?.dataset.merch;
+    if (merch) { openMerchant(merch); return; }
+    const mact = hit('[data-merch-act]')?.dataset.merchAct;
+    if (mact) { await merchantAction(mact); return; }
+
+    /* ---- שאל את הכסף ---- */
+    if (hit('#ask-go')) { await runAsk(); return; }
+
+    /* ---- דוחות ---- */
+    if (hit('#rep-export')) {
+      const m = shiftMonth(curMonth(), -1);
+      const src = statsFor(m).count ? m : curMonth();
+      download(`דוח-כסף-${src}.html`, buildMonthReport(src), 'text/html');
+      toast('הדוח ירד'); return;
+    }
+    const goal = hit('[data-goal]')?.dataset.goal;
+    if (goal) {
+      const cur = S.budgets.find(b => b.key === 'goal:' + goal)?.amount || 0;
+      const v = prompt(`יעד צבירה עבור ${goal} (₪). השאר ריק לביטול:`, cur ? String(cur / 100) : '');
+      if (v === null) return;
+      const amount = toAgorot(v);
+      if (amount > 0) await DB.put('budgets', { key: 'goal:' + goal, amount, rollover: false, since: curMonth() });
+      else await DB.del('budgets', 'goal:' + goal);
+      await reload(); renderWealth(); toast(amount ? 'היעד נשמר' : 'היעד הוסר'); return;
+    }
+
     /* ---- יתרות ---- */
     if (hit('#edit-balances') || hit('#set-balances')) { openBalances(); return; }
     if (hit('#save-balances')) { await saveBalances(); return; }
@@ -2575,6 +2955,7 @@ function wire() {
   });
 
   $('#q').addEventListener('input', (e) => { S.q = e.target.value; renderLedger(); });
+  $('#ask-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') runAsk(); });
 
   // סינון מתקדם
   const advMap = { 'lg-from': 'from', 'lg-to': 'to', 'lg-min': 'min', 'lg-max': 'max' };

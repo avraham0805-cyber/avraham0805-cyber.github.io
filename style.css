@@ -241,6 +241,8 @@ a { color: var(--accent); text-underline-offset: 2px; }
 /* ---------- טבלאות ---------- */
 
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+/* שם ארוך של בית עסק נשבר לשורה במקום להרחיב את הטבלה מעבר למסך */
+table.tbl td:first-child { overflow-wrap: anywhere; }
 table.tbl th {
   text-align: right; font-size: 10.5px; font-weight: 660; letter-spacing: .07em;
   text-transform: uppercase; color: var(--ink-3); padding: 0 8px 7px; border-bottom: 1px solid var(--rule);
@@ -282,6 +284,9 @@ table.tbl tfoot td { font-weight: 660; border-top: 1px solid var(--rule-2); bord
 .row .amt { font-size: 14.5px; font-weight: 620; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .row .amt.in { color: var(--delta-up); }
 .row .amt.neutral { color: var(--ink-3); }
+
+/* שדה בתוך flex בלי min-width:0 מסרב להתכווץ ומגליש את העמוד כולו */
+.pair > input.inp, .pair > .field { min-width: 0; }
 
 #lg-adv { margin: 4px 0 12px; }
 #lg-adv summary {
@@ -534,3 +539,25 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
   nav.tabbar, .sheet, .toast { display: none !important; }
   body { background: #fff; }
 }
+
+/* ---------- לוח חודש ---------- */
+.calgrid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+}
+.calgrid .calhead {
+  text-align: center; font-size: 10px; font-weight: 660; color: var(--ink-3);
+  padding: 2px 0 6px; letter-spacing: .05em;
+}
+.calgrid .calcell {
+  min-height: 46px; border: 1px solid var(--rule); border-radius: 8px;
+  padding: 4px 5px; display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface);
+}
+.calgrid .calcell.empty { border-color: transparent; background: transparent; }
+.calgrid .calcell .d { font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.calgrid .calcell .v {
+  font-size: 10px; font-weight: 640; color: var(--ink); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.calgrid .calcell.has { border-color: var(--s1); background: color-mix(in srgb, var(--s1) 7%, var(--surface)); }
+.calgrid .calcell.today { outline: 2px solid var(--accent); outline-offset: -1px; }

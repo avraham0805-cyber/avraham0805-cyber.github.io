@@ -490,3 +490,77 @@ export function legend(keys) {
     `<span><i class="swatch" style="background:${k.color}"></i>${k.label}</span>`).join('');
   return box;
 }
+
+
+/* ==================== קו ערך — תומך בשלילי ==================== */
+
+/**
+ * קו יחיד עם ציר אפס. cumulativeLine מנרמל 0..max ולכן שובר על ערכים
+ * שליליים — כאן הנרמול הוא min..max אמיתי, עם קו אפס כשצריך.
+ * points: [{label, value}]
+ */
+export function line(points, { height = 120, fmt = String } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chartwrap';
+  if (points.length < 2) return wrap;
+  const vals = points.map(p => p.value);
+  const max = Math.max(...vals, 0), min = Math.min(...vals, 0);
+  const span = (max - min) || 1;
+  const W = 100, H = height, padT = 8, padB = 6;
+  const plot = H - padT - padB;
+  const x = (i) => (i / (points.length - 1)) * W;
+  const y = (v) => padT + plot * (1 - (v - min) / span);
+
+  const svg = el('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', style: `height:${H}px`, role: 'img' });
+  if (min < 0 && max > 0) {
+    svg.appendChild(el('line', { class: 'grid', x1: 0, x2: W, y1: y(0), y2: y(0), vectorEffect: 'non-scaling-stroke' }));
+  }
+  svg.appendChild(el('polyline', {
+    points: points.map((p, i) => `${x(i).toFixed(2)},${y(p.value).toFixed(2)}`).join(' '),
+    fill: 'none', stroke: 'var(--s1)', 'stroke-width': 2,
+    'stroke-linejoin': 'round', 'stroke-linecap': 'round', vectorEffect: 'non-scaling-stroke',
+  }));
+  const last = points.at(-1);
+  svg.appendChild(el('circle', { cx: x(points.length - 1), cy: y(last.value), r: 2.4, fill: 'var(--s1)' }));
+  points.forEach((p, i) => {
+    const hit = el('rect', { class: 'hit', x: x(i) - W / points.length / 2, y: 0, width: W / points.length, height: H, tabindex: 0 });
+    bindTip(hit, `<div class="k">${p.label}</div><b>${fmt(p.value)}</b>`);
+    svg.appendChild(hit);
+  });
+  wrap.appendChild(svg);
+  return wrap;
+}
+
+/* ==================== לוח חודש ==================== */
+
+/**
+ * לוח חודשי עם סכום על כל יום — ללוח החיובים הקרובים.
+ * byDay: Map מספר-יום → {total, items:[string]}
+ */
+export function monthGrid(month, byDay, { fmt = String, today = null } = {}) {
+  const [y, mo] = month.split('-').map(Number);
+  const dim = new Date(y, mo, 0).getDate();
+  const firstDow = new Date(y, mo - 1, 1).getDay();       // 0=ראשון
+  const wrap = document.createElement('div');
+  wrap.className = 'calgrid';
+  wrap.setAttribute('dir', 'rtl');
+  for (const h of ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש']) {
+    const c = document.createElement('div');
+    c.className = 'calhead'; c.textContent = h;
+    wrap.appendChild(c);
+  }
+  for (let i = 0; i < firstDow; i++) {
+    const c = document.createElement('div');
+    c.className = 'calcell empty';
+    wrap.appendChild(c);
+  }
+  for (let d = 1; d <= dim; d++) {
+    const c = document.createElement('div');
+    const e = byDay.get(d);
+    c.className = 'calcell' + (e ? ' has' : '') + (today === d ? ' today' : '');
+    c.innerHTML = `<span class="d">${d}</span>` + (e ? `<span class="v">${fmt(e.total)}</span>` : '');
+    if (e) c.title = e.items.join('\n');
+    wrap.appendChild(c);
+  }
+  return wrap;
+}

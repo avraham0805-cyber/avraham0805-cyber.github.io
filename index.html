@@ -163,6 +163,16 @@
   <div class="tiles" id="an-tiles"></div>
 
   <div class="sec">
+    <header><h2>שאל את הכסף</h2></header>
+    <div class="pair" style="align-items:stretch">
+      <input class="inp" id="ask-q" placeholder="כמה הוצאתי על אוכל החודש?" autocomplete="off">
+      <button class="btn accent sm" id="ask-go" style="flex:0 0 auto">שאל</button>
+    </div>
+    <div id="ask-a"></div>
+    <div class="hint">השאלה נשלחת ל-Gemini יחד עם סיכומים חודשיים בלבד — לא תנועות בודדות.</div>
+  </div>
+
+  <div class="sec">
     <header><h2>מה השתנה מהחודש הקודם</h2><div class="aside" id="an-attr-aside"></div></header>
     <div id="an-attribution"></div>
   </div>
@@ -278,6 +288,47 @@
   </div>
 </section>
 
+
+<!-- ==================== דוחות ==================== -->
+<section class="view" id="v-reports">
+  <header class="pagehead">
+    <div><h1>דוחות</h1><div class="meta" id="rp-meta"></div></div>
+    <button class="chip" id="rep-export">הורדת דוח חודשי</button>
+  </header>
+
+  <div class="sec">
+    <header><h2>סגירת חודש</h2><div class="aside" id="rep-close-aside"></div></header>
+    <div id="rep-close"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>לוח חיובים קרובים</h2><div class="aside" id="rep-cal-aside"></div></header>
+    <div id="rep-cal"></div>
+    <div class="hint">קבועות, מנויים שזוהו, ותשלומים פתוחים — על ימי החודש.
+      געו ביום כדי לראות מה יורד בו.</div>
+  </div>
+
+  <div class="sec">
+    <header><h2>שווי נקי לאורך זמן</h2><div class="aside" id="rep-nw-aside"></div></header>
+    <div id="rep-nw"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>שיעור חיסכון</h2><div class="aside" id="rep-sr-aside"></div></header>
+    <div id="rep-sr"></div>
+    <div class="hint">כמה מכל שקל שנכנס הפך לחיסכון והשקעה. זה המדד — לא כמה יצא.</div>
+  </div>
+
+  <div class="sec">
+    <header><h2>הון לפי אפיק</h2><div class="aside" id="rep-wealth-aside"></div></header>
+    <div id="rep-wealth"></div>
+  </div>
+
+  <div class="sec">
+    <header><h2>מסחר — שורה תחתונה</h2><div class="aside" id="rep-tr-aside"></div></header>
+    <div id="rep-trading"></div>
+  </div>
+</section>
 
 <!-- ==================== התייעלות ==================== -->
 <section class="view" id="v-insights">
@@ -417,6 +468,7 @@
   <div class="in">
     <button data-go="home" class="on"><svg><use href="#ic-home"/></svg>בית</button>
     <button data-go="analysis"><svg><use href="#ic-chart"/></svg>ניתוח</button>
+    <button data-go="reports"><svg><use href="#ic-trend"/></svg>דוחות</button>
     <button data-go="insights"><svg><use href="#ic-bulb"/></svg>התייעלות</button>
     <button data-go="ledger"><svg><use href="#ic-list"/></svg>תנועות</button>
   </div>
@@ -488,6 +540,11 @@
 <div class="sheet" id="sh-rules"><div class="veil" data-close></div><div class="card">
   <div class="grip"></div><h2 class="title">חוקי סיווג</h2>
   <div id="rules-body"></div>
+</div></div>
+
+<div class="sheet" id="sh-merch"><div class="veil" data-close></div><div class="card">
+  <div class="grip"></div><h2 class="title" id="merch-title">בית עסק</h2>
+  <div id="merch-body"></div>
 </div></div>
 
 <div class="toast" id="toast"></div>

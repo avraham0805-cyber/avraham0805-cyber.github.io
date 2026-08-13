@@ -294,7 +294,8 @@ export function budgetStatus(txs, budgets, month, today = new Date()) {
       .reduce((s, t) => s + ils(t), 0);
   };
 
-  const items = budgets.filter(b => b.amount > 0).map(b => {
+  // מפתחות goal: הם יעדי חיסכון שחיים באותו מחסן — לא תקציבי הוצאה
+  const items = budgets.filter(b => b.amount > 0 && !b.key.startsWith('goal:')).map(b => {
     const spentV = spentFor(b.key);
     const [d, c] = b.key.split('/');
     const ratio = b.amount ? spentV / b.amount : 0;
@@ -394,6 +395,113 @@ export function allTags(txs) {
   const s = new Set();
   for (const t of txs) for (const tag of (t.tags || [])) s.add(tag);
   return [...s].sort();
+}
+
+/* ==================== שווי נקי לאורך זמן ==================== */
+
+/**
+ * יתרת חשבון בסוף תאריך נתון, מחושבת מהעוגן לשני הכיוונים.
+ * העוגן הוא תחילת balanceDate, ולכן קדימה נספרים ימים מ-balanceDate
+ * ואילך, ואחורה מוחסרים הימים שבין התאריך המבוקש לעוגן — לא כולל
+ * את יום העוגן עצמו, שתנועותיו קרו אחרי רגע העיגון.
+ */
+export function balanceAt(txs, account, dateISO) {
+  if (!account.balanceDate) return null;
+  const val = (t) => flowOf(t.dept) === 'in' ? ils(t) : flowOf(t.dept) === 'out' ? -ils(t) : 0;
+  const rows = live(txs).filter(t => t.account === account.id);
+  if (dateISO >= account.balanceDate) {
+    return (account.balance || 0) + rows
+      .filter(t => t.dateBuy >= account.balanceDate && t.dateBuy <= dateISO)
+      .reduce((s, t) => s + val(t), 0);
+  }
+  return (account.balance || 0) - rows
+    .filter(t => t.dateBuy > dateISO && t.dateBuy < account.balanceDate)
+    .reduce((s, t) => s + val(t), 0);
+}
+
+/** סדרת שווי נקי חודשית — סוף כל חודש, והחודש הנוכחי עד היום */
+export function netWorthSeries(txs, accounts, months = 12, today = new Date()) {
+  const anchored = accounts.filter(a => a.balanceDate && a.active !== false);
+  if (!anchored.length) return [];
+  const cur = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const firstTx = live(txs).map(t => t.month).filter(Boolean).sort()[0] || cur;
+  const ms = monthsRange(cur, months).filter(m => m >= firstTx);
+  if (!ms.length) return [];
+  return ms.map(m => {
+    const endDay = m === cur ? today.getDate() : daysInMonth(m);
+    const date = `${m}-${String(endDay).padStart(2, '0')}`;
+    return { month: m, date, total: anchored.reduce((s, a) => s + (balanceAt(txs, a, date) ?? 0), 0) };
+  });
+}
+
+/* ==================== שיעור חיסכון ==================== */
+
+/**
+ * כמה מההכנסה הפכה לחיסכון (transfer/invest) וכמה נשארה נטו.
+ * זה המדד שהענף כולו מסתיר מאחורי גרפים של הוצאות: לא כמה יצא —
+ * כמה מכל שקל שנכנס נשאר אצלך.
+ */
+export function savingsRateSeries(txs, months = 6, today = new Date()) {
+  const cur = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  return monthsRange(cur, months).map(m => {
+    const rows = live(txs.filter(t => t.month === m));
+    const inc = rows.filter(t => flowOf(t.dept) === 'in').reduce((s, t) => s + ils(t), 0);
+    const sav = rows.filter(t => t.dept === 'transfer' && t.cat === 'invest').reduce((s, t) => s + ils(t), 0);
+    const out = rows.filter(t => flowOf(t.dept) === 'out').reduce((s, t) => s + ils(t), 0);
+    return { month: m, income: inc, saved: sav, out, rate: inc ? sav / inc : null };
+  });
+}
+
+/* ==================== הון לפי אפיק ==================== */
+
+/** כמה נצבר בכל יעד חיסכון — קופות, ברוקר, חסכונות — מאז שהתחלת לתעד */
+export function wealthByDestination(txs, today = new Date()) {
+  const rows = live(txs).filter(t => t.dept === 'transfer' && t.cat === 'invest');
+  const by = new Map();
+  for (const t of rows) {
+    const k = (t.merchant || 'ללא שם').trim();
+    if (!by.has(k)) by.set(k, { name: k, total: 0, count: 0, byMonth: new Map(), first: t.month });
+    const e = by.get(k);
+    e.total += ils(t); e.count++;
+    e.byMonth.set(t.month, (e.byMonth.get(t.month) || 0) + ils(t));
+    if (t.month < e.first) e.first = t.month;
+  }
+  const cur = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const monthsLeft = 12 - today.getMonth() - 1;
+  return [...by.values()].map(e => {
+    const recent = monthsRange(cur, 3).map(m => e.byMonth.get(m) || 0).filter(v => v > 0);
+    const monthly = median(recent);
+    return {
+      name: e.name, total: e.total, count: e.count, first: e.first, monthly,
+      series: monthsRange(cur, 6).map(m => e.byMonth.get(m) || 0),
+      projectedYearEnd: e.total + monthly * monthsLeft,
+    };
+  }).sort((a, b) => b.total - a.total);
+}
+
+/* ==================== מסחר — שורה תחתונה ==================== */
+
+/**
+ * ההכנסות מהמסחר מול כל עלויות המסחר, חודש בחודש. עונה על השאלה
+ * שאף גרף הוצאות לא עונה עליה: האם הפעילות הזו מרוויחה אחרי הכל.
+ */
+export function tradingPnL(txs, months = 12, today = new Date()) {
+  const cur = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const rows = monthsRange(cur, months).map(m => {
+    const mtx = live(txs.filter(t => t.month === m));
+    const inc = mtx.filter(t => t.dept === 'income' && (t.cat === 'payout' || t.cat === 'dividend'))
+      .reduce((s, t) => s + ils(t), 0);
+    const cost = mtx.filter(t => t.dept === 'trading').reduce((s, t) => s + ils(t), 0);
+    return { month: m, income: inc, cost, net: inc - cost };
+  }).filter(r => r.income || r.cost);
+  let acc = 0;
+  for (const r of rows) { acc += r.net; r.cumulative = acc; }
+  return {
+    rows,
+    income: rows.reduce((s, r) => s + r.income, 0),
+    cost: rows.reduce((s, r) => s + r.cost, 0),
+    net: rows.reduce((s, r) => s + r.net, 0),
+  };
 }
 
 /* ==================== השלכה לסוף חודש ==================== */

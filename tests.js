@@ -678,6 +678,92 @@ await t('תחזית מפחיתה תשלומים שנגמרים', () => {
   assert(fc.rows[2].out < fc.rows[0].out, 'היציאה חייבת לרדת כשסדרה נגמרת');
 });
 
+/* ==================== שכבת העושר ==================== */
+
+G('עושר');
+
+await t('יתרה בתאריך — קדימה ואחורה מהעוגן', () => {
+  const acc = { id: 'bank1', balance: 1000000, balanceDate: '2026-08-10' };
+  const rows = [
+    mk({ dateBuy: '2026-08-05', amount: 100000, account: 'bank1' }),                       // לפני העוגן
+    mk({ dateBuy: '2026-08-10', amount: 50000, account: 'bank1' }),                        // ביום העוגן — קדימה
+    mk({ dateBuy: '2026-08-12', amount: 200000, account: 'bank1', dept: 'income', cat: 'salary' }),
+  ];
+  assertEq(ST.balanceAt(rows, acc, '2026-08-12'), 1000000 - 50000 + 200000, 'קדימה');
+  assertEq(ST.balanceAt(rows, acc, '2026-08-09'), 1000000, 'יום לפני העוגן — יום העוגן לא נספר');
+  assertEq(ST.balanceAt(rows, acc, '2026-08-04'), 1000000 + 100000, 'אחורה — ההוצאה מוחזרת');
+  assertEq(ST.balanceAt(rows, { id: 'x' }, '2026-08-12'), null, 'בלי עוגן אין יתרה');
+});
+
+await t('סדרת שווי נקי עולה עם הכנסה ויורדת עם הוצאה', () => {
+  const accs = [{ id: 'bank1', balance: 500000, balanceDate: '2026-06-01', active: true }];
+  const rows = [
+    mk({ dateBuy: '2026-06-15', amount: 100000, account: 'bank1' }),
+    mk({ dateBuy: '2026-07-10', amount: 300000, account: 'bank1', dept: 'income', cat: 'salary' }),
+  ];
+  const s = ST.netWorthSeries(rows, accs, 12, new Date(2026, 6, 20));
+  assertEq(s.length, 2);
+  assertEq(s[0].total, 400000, 'סוף יוני');
+  assertEq(s[1].total, 700000, 'אמצע יולי');
+});
+
+await t('שיעור חיסכון = הפקדות מתוך הכנסה', () => {
+  const rows = [
+    mk({ dateBuy: '2026-07-10', amount: 1000000, dept: 'income', cat: 'salary' }),
+    mk({ dateBuy: '2026-07-15', amount: 250000, dept: 'transfer', cat: 'invest', merchant: 'קופה' }),
+    mk({ dateBuy: '2026-07-16', amount: 90000 }),
+  ];
+  const r = ST.savingsRateSeries(rows, 2, new Date(2026, 6, 20)).find(x => x.month === '2026-07');
+  assertEq(r.income, 1000000);
+  assertEq(r.saved, 250000);
+  assertClose(r.rate, 0.25, 0.001);
+});
+
+await t('הון לפי אפיק נצבר ומוקרן', () => {
+  const rows = ['2026-05', '2026-06', '2026-07'].flatMap(m => [
+    mk({ dateBuy: `${m}-15`, amount: 50000, dept: 'transfer', cat: 'invest', merchant: 'Interactive Brokers' }),
+    mk({ dateBuy: `${m}-15`, amount: 75000, dept: 'transfer', cat: 'invest', merchant: 'קופת גמל' }),
+  ]);
+  const w = ST.wealthByDestination(rows, new Date(2026, 6, 20));
+  assertEq(w.length, 2);
+  assertEq(w[0].name, 'קופת גמל', 'הגדול קודם');
+  assertEq(w[0].total, 225000);
+  assertEq(w[1].total, 150000);
+  assertEq(w[0].monthly, 75000, 'קצב חודשי מהחציון');
+});
+
+await t('P&L מסחר — משיכות מול עלויות', () => {
+  const rows = [
+    mk({ dateBuy: '2026-06-05', amount: 30000, dept: 'trading', cat: 'data', merchant: 'Databento' }),
+    mk({ dateBuy: '2026-06-20', amount: 500000, dept: 'income', cat: 'payout', merchant: 'Bulenox' }),
+    mk({ dateBuy: '2026-07-05', amount: 30000, dept: 'trading', cat: 'platforms' }),
+  ];
+  const p = ST.tradingPnL(rows, 12, new Date(2026, 6, 20));
+  assertEq(p.income, 500000);
+  assertEq(p.cost, 60000);
+  assertEq(p.net, 440000);
+  assertEq(p.rows.at(-1).cumulative, 440000);
+});
+
+await t('משכורת אינה נספרת כהכנסת מסחר', () => {
+  const rows = [
+    mk({ dateBuy: '2026-07-10', amount: 900000, dept: 'income', cat: 'salary' }),
+    mk({ dateBuy: '2026-07-11', amount: 20000, dept: 'trading', cat: 'data' }),
+  ];
+  const p = ST.tradingPnL(rows, 12, new Date(2026, 6, 20));
+  assertEq(p.income, 0, 'רק payout ודיבידנד');
+  assertEq(p.net, -20000);
+});
+
+await t('מפתחות goal: אינם תקציבי הוצאה', () => {
+  const st = ST.budgetStatus([], [
+    { key: 'food', amount: 100000 },
+    { key: 'goal:קופה', amount: 5000000 },
+  ], '2026-08', new Date(2026, 7, 10));
+  assertEq(st.items.length, 1);
+  assertEq(st.items[0].key, 'food');
+});
+
 /* ==================== מנוע התייעלות ==================== */
 
 G('התייעלות');

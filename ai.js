@@ -203,6 +203,48 @@ export async function testKey(key) {
   return models[0] || null;
 }
 
+/* ==================== שאילתה בשפה חופשית ==================== */
+
+/**
+ * "כמה הוצאתי על אוכל החודש?" — שאלה + סיכומים מצטברים נשלחים למודל.
+ * נשלחים סיכומים בלבד, לא תנועות בודדות; המשתמש רואה גילוי נאות בממשק.
+ */
+export async function ask(question, contextJson, { signal } = {}) {
+  const key = await DB.getSecret('geminiKey');
+  if (!key) throw new Error('לא הוגדר מפתח Gemini. עבור להגדרות');
+  const model = await resolveModel(key);
+  const q = clean(question, 300);
+  if (!q) throw new Error('שאלה ריקה');
+
+  const prompt = `אתה עוזר פיננסי אישי בעברית. ענה על שאלת המשתמש אך ורק על סמך
+נתוני הסיכום המצורפים. כללים:
+1. תשובה קצרה וישירה, עד 4 משפטים. סכומים בש״ח עם הפרדת אלפים.
+2. אל תמציא נתון שאינו מופיע. אם הנתון חסר — אמור זאת במפורש.
+3. ציין לאיזה חודש התשובה מתייחסת כשזה רלוונטי.
+4. אל תיתן ייעוץ השקעות.
+
+שאלת המשתמש: ${q}
+
+נתוני סיכום (JSON):
+${contextJson}`;
+
+  const res = await fetch(`${BASE}/${model.replace(/^models\//, 'models/')}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(key) },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 500 },
+    }),
+    referrerPolicy: 'no-referrer',
+    signal,
+  });
+  if (!res.ok) throw await apiError(res);
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+  if (!text) throw new Error('המודל לא החזיר תשובה');
+  return text.trim().slice(0, 2000);
+}
+
 /* ==================== חיטוי הפלט של המודל ==================== */
 
 const MAX_ITEMS = 200;
