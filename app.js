@@ -435,7 +435,7 @@ function renderMonthClose() {
         <span class="t1">שיעור חיסכון: ${Math.round((sr.rate || 0) * 100)}%</span>
         <span class="t2">${money0(sr.saved)} הופנו לחיסכון מתוך ${money0(sr.income)} הכנסה</span>
       </span></div>` : ''}
-      ${biggest ? `<div class="row" data-merch="${esc(biggest.merchant || '')}"><span class="body">
+      ${biggest ? `<div class="row" ${biggest.merchant ? `data-merch="${esc(biggest.merchant)}"` : 'style="cursor:default"'}><span class="body">
         <span class="t1">ההוצאה הגדולה: ${esc(biggest.merchant || catLabel(biggest.dept, biggest.cat))}</span>
         <span class="t2">${money(ils(biggest))} · ${esc(pathLabel(biggest.dept, biggest.cat))}</span>
       </span></div>` : ''}
@@ -1534,29 +1534,31 @@ function renderAnalysis() {
 
   // בתי עסק
   const merch = Object.entries(st.byMerchant).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  // שורות ללא שם עסק אמיתי (תווית קטגוריה של מזומן) אינן דלת — בלי קליק
+  const realNames = new Set(live(S.txs).map(t => (t.merchant || '').trim()).filter(Boolean));
   $('#an-merchants').innerHTML = merch.length ? table(
     [{ label: 'בית עסק' }, { label: 'סכום', n: true }, { label: 'חלק', n: true }],
     merch.map(([name, v]) => ({
-      click: true, data: `data-merch="${esc(name)}"`,
+      ...(realNames.has(name) ? { click: true, data: `data-merch="${esc(name)}"` } : {}),
       cells: [esc(name), `<span class="num">${money(v)}</span>`, `<span class="num">${pct(v, st.out)}%</span>`],
     })),
     { foot: ['סה״כ', `<span class="num">${money(st.out)}</span>`, '100%'] },
   ) + '<div class="hint">געו בבית עסק להיסטוריה, מגמה ופעולות עליו.</div>' : '<div class="empty">אין נתונים</div>';
 
-  // תשלומים
-  const open = live(S.txs).filter(t => t.installment && t.installment.of > t.installment.n && flowOf(t.dept) === 'out');
+  // תשלומים — מיושנים ומאוחדים לסדרה, לא שורת-דף-אשראי היסטורית
+  const open = ST.activeInstallments(S.txs);
   $('#an-inst').innerHTML = open.length ? table(
     [{ label: 'בית עסק' }, { label: 'מצב' }, { label: 'לחודש', n: true }, { label: 'נותר', n: true }],
-    open.sort((a, b) => ils(b) * (b.installment.of - b.installment.n) - ils(a) * (a.installment.of - a.installment.n))
-      .map(t => ({
+    open.sort((a, b) => ils(b.t) * b.left - ils(a.t) * a.left)
+      .map(r => ({
         cells: [
-          esc(t.merchant || catLabel(t.dept, t.cat)),
-          `${t.installment.n}/${t.installment.of}`,
-          `<span class="num">${money(ils(t))}</span>`,
-          `<span class="num">${money(ils(t) * (t.installment.of - t.installment.n))}</span>`,
+          esc(r.t.merchant || catLabel(r.t.dept, r.t.cat)),
+          `${r.aged}/${r.of}`,
+          `<span class="num">${money(ils(r.t))}</span>`,
+          `<span class="num">${money(ils(r.t) * r.left)}</span>`,
         ],
       })),
-    { foot: ['סה״כ מחויב קדימה', '', '', `<span class="num">${money(open.reduce((s, t) => s + ils(t) * (t.installment.of - t.installment.n), 0))}</span>`] },
+    { foot: ['סה״כ מחויב קדימה', '', '', `<span class="num">${money(open.reduce((s, r) => s + ils(r.t) * r.left, 0))}</span>`] },
   ) : '<div class="empty">אין תשלומים פתוחים</div>';
 }
 
@@ -2664,7 +2666,19 @@ function wire() {
 
 
     const tx = hit('[data-tx]');
-    if (tx) { openTx(tx.dataset.tx); return; }
+    if (tx) {
+      // תיבת הבחירה יושבת בתוך כפתור השורה — קליק עליה חייב לסמן,
+      // לא לפתוח את התנועה. בלי הבדיקה הזו בחירה בודדת לא עבדה כלל.
+      const box = t.closest('[data-sel]');
+      if (box) {
+        const id = box.dataset.sel;
+        SEL.has(id) ? SEL.delete(id) : SEL.add(id);
+        renderLedger();
+        return;
+      }
+      openTx(tx.dataset.tx);
+      return;
+    }
 
     // הוספה
     const k = hit('[data-key]'); if (k) { key(k.dataset.key); return; }

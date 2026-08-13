@@ -115,7 +115,7 @@ async function seed(K) {
 async function crawl(K) {
   await seed(K);
 
-  for (const v of ['home', 'analysis', 'insights', 'ledger', 'settings']) {
+  for (const v of ['home', 'analysis', 'reports', 'insights', 'ledger', 'settings']) {
     R.ran.push('view:' + v);
     K.S.view = v; K.render(); await sleep(350);
     await clickOnePerKind(document.querySelector('#v-' + v), `[${v}]`);
@@ -131,6 +131,7 @@ async function crawl(K) {
     ['sh-fixed', async () => { K.S.view = 'settings'; K.render(); await sleep(350); document.querySelector('[data-fixed]')?.click(); }],
     ['sh-account', async () => { K.S.view = 'settings'; K.render(); await sleep(350); document.querySelector('[data-acct]')?.click(); }],
     ['sh-rules', async () => { K.S.view = 'settings'; K.render(); await sleep(350); document.querySelector('#st-managerules')?.click(); }],
+    ['sh-merch', async () => { K.S.view = 'analysis'; K.render(); await sleep(400); document.querySelector('#an-merchants [data-merch]')?.click(); }],
   ];
 
   for (const [id, open] of sheets) {

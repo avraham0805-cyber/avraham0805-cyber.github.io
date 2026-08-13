@@ -775,6 +775,85 @@ await t('מפתחות goal: אינם תקציבי הוצאה', () => {
   assertEq(st.items[0].key, 'food');
 });
 
+/* ==================== ממצאי סוכני הביקורת ==================== */
+
+G('ממצאי ביקורת');
+
+await t('העברה עוזבת את חשבון המקור', () => {
+  const acc = { id: 'bank1', type: 'bank', balance: 1000000, balanceDate: '2026-08-01' };
+  const rows = [mk({ dateBuy: '2026-08-05', amount: 100000, account: 'bank1', dept: 'transfer', cat: 'invest', merchant: 'קופה' })];
+  assertEq(ST.balanceAt(rows, acc, '2026-08-10'), 900000, 'הפקדה להשקעה יצאה מהבנק');
+});
+
+await t('משיכת מזומן עוברת מהבנק לארנק', () => {
+  const bank = { id: 'bank1', type: 'bank', balance: 500000, balanceDate: '2026-08-01' };
+  const cash = { id: 'cash', type: 'cash', balance: 20000, balanceDate: '2026-08-01' };
+  const rows = [mk({ dateBuy: '2026-08-05', amount: 80000, account: 'bank1', dept: 'transfer', cat: 'withdrawal', merchant: 'משיכה' })];
+  assertEq(ST.balanceAt(rows, bank, '2026-08-10'), 420000, 'ירד מהבנק');
+  assertEq(ST.balanceAt(rows, cash, '2026-08-10'), 100000, 'נכנס לארנק');
+  const b = ST.balances(rows, [bank, cash], new Date(2026, 7, 10));
+  assertEq(b.netWorth, 520000, 'הסך הכולל לא השתנה מהמשיכה');
+});
+
+await t('תשלומים מיושנים — סדרה ישנה לא חיה לנצח', () => {
+  // שורת "1 מתוך 12" מ-2025-01: הסדרה נגמרה בפועל בדצמבר 2025
+  const old = mk({ dateBuy: '2025-01-15', merchant: 'ישן', amount: 10000, installment: { n: 1, of: 12 } });
+  const act = ST.activeInstallments([old], new Date(2026, 7, 13));
+  assertEq(act.length, 0, 'סדרה שהסתיימה מזמן עדיין פעילה');
+  const up = ST.upcoming([old], [], [], 30, new Date(2026, 7, 13));
+  assertEq(up.items.length, 0, 'והיא לא מופיעה בעומד-לרדת');
+});
+
+await t('שורות חודשיות של אותה סדרה נספרות פעם אחת', () => {
+  // דף אשראי מייצר שורה כל חודש: 1/12 בינואר, 2/12 בפברואר...
+  const rows = [1, 2, 3].map(n => mk({
+    dateBuy: `2026-0${5 + n}-15`, merchant: 'KSP', amount: 49900, installment: { n, of: 12 },
+  }));
+  const act = ST.activeInstallments(rows, new Date(2026, 7, 13));
+  assertEq(act.length, 1, 'שלוש שורות = סדרה אחת');
+  assertEq(act[0].aged, 3, 'החדשה ביותר קובעת');
+});
+
+await t('חיוב ביום 31 נצמד לסוף החודש האמיתי', () => {
+  const fixed = [{ id: 'f', merchant: 'סוף חודש', amount: 10000, day: 31, dept: 'home', cat: 'rent', active: true }];
+  // ספטמבר בן 30 יום — החיוב חייב ליפול על 30.09, לא על 28.09
+  const up = ST.upcoming([], [], fixed, 40, new Date(2026, 8, 5));
+  assertEq(up.items[0].date, '2026-09-30');
+});
+
+await t('קבוע שמאחר לא נשמט מהתחזית', () => {
+  const rows = [];
+  for (const m of ['2026-05', '2026-06', '2026-07']) {
+    rows.push(mk({ dateBuy: `${m}-05`, merchant: 'שכר דירה', amount: 540000, dept: 'home', cat: 'rent' }));
+  }
+  // ב-10 באוגוסט השכירות של אוגוסט עוד לא נחתה — היום הרגיל שלה עבר
+  const rec = [{ merchant: 'שכר דירה', monthly: 540000, lastDate: '2026-07-05', dept: 'home', cat: 'rent' }];
+  const p = ST.projectMonth(rows, '2026-08', rec, new Date(2026, 7, 10));
+  assertEq(p.remainingFixed, 540000, 'החיוב המאחר עדיין צפוי');
+});
+
+await t('גלגול ותיק מעבר לחלון לא נזרק', () => {
+  const budgets = [{ key: 'food', amount: 100000, rollover: true, since: '2025-01' }];
+  // 19 חודשים בלי שום הוצאה: הכל מתגלגל
+  const r = ST.rollover([], budgets, '2026-08');
+  assertEq(r.get('food'), 100000 * 19, 'כל החודשים מאז since נספרים');
+});
+
+await t('יציבות נמדדת מלידת הקטגוריה', () => {
+  const rows = [];
+  // קטגוריה שנולדה לפני חודשיים בלבד, יציבה לגמרי מאז
+  for (const m of ['2026-06', '2026-07', '2026-08']) {
+    rows.push(mk({ dateBuy: `${m}-10`, dept: 'health', cat: 'gym', amount: 24900 }));
+  }
+  // ומחלקה ותיקה עם היסטוריה ארוכה, כדי שחלון החודשים יהיה רחב
+  for (const m of ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07']) {
+    rows.push(mk({ dateBuy: `${m}-05`, dept: 'home', cat: 'rent', amount: 540000 }));
+  }
+  const gym = ST.volatility(rows).find(v => v.cat === 'gym');
+  assert(gym, 'הקטגוריה קיימת');
+  assertEq(gym.cv, 0, 'קבועה מאז שנולדה — האפסים שקדמו ללידה אינם תנודתיות');
+});
+
 /* ==================== מנוע התייעלות ==================== */
 
 G('התייעלות');

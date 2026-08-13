@@ -60,6 +60,32 @@ export function runRate(txs, month, today = new Date()) {
  * קבוע = חיובים חוזרים מזוהים; משתנה = חציון 3 החודשים האחרונים בניכוי הקבוע.
  * חציון ולא ממוצע — כדי שחודש חריג אחד לא יעוות את התחזית.
  */
+/** מספר חודשים שלמים בין שני YYYY-MM */
+export function monthsBetween(a, b) {
+  const [ya, ma] = a.split('-').map(Number);
+  const [yb, mb] = b.split('-').map(Number);
+  return (yb - ya) * 12 + (mb - ma);
+}
+
+/**
+ * תשלומים פעילים נכון להיום.
+ * שורת "3 מתוך 12" בדף אשראי היא צילום מצב מהחודש שבו הופיעה — חודשיים
+ * אחריה נותרו 7, לא 9. בלי יישון, סדרה ישנה מנפחת את התחזית לנצח;
+ * ובלי איחוד, כל שורה חודשית של אותה סדרה נספרת שוב במקביל.
+ */
+export function activeInstallments(txs, today = new Date()) {
+  const cur = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const best = new Map();
+  for (const t of live(txs)) {
+    if (!t.installment || flowOf(t.dept) !== 'out') continue;
+    const aged = t.installment.n + Math.max(0, monthsBetween(t.month, cur));
+    const key = `${(t.merchant || '').trim()}|${t.installment.of}|${ils(t)}`;
+    const prev = best.get(key);
+    if (!prev || aged > prev.aged) best.set(key, { t, aged, of: t.installment.of, left: t.installment.of - aged });
+  }
+  return [...best.values()].filter(r => r.left > 0);
+}
+
 export function forecast(txs, recurring = [], months = 3, from = null) {
   const all = [...new Set(live(txs).map(t => t.month))].filter(Boolean).sort();
   if (all.length < 2) return null;
@@ -73,15 +99,16 @@ export function forecast(txs, recurring = [], months = 3, from = null) {
   const medIn = median(ins.filter(v => v > 0));
   const variable = Math.max(0, medOut - fixedMonthly);
 
-  // התחייבויות תשלומים שכבר ידועות, לפי חודש קדימה
-  const inst = live(txs).filter(t => t.installment && t.installment.of > t.installment.n && flowOf(t.dept) === 'out');
+  // התחייבויות תשלומים — מיושנות לזמן שעבר ומאוחדות לסדרה אחת,
+  // אחרת כל שורת דף-אשראי היסטורית של אותה סדרה נספרת שוב ושוב
+  const inst = activeInstallments(txs, new Date(base + '-15T00:00:00'));
 
   const rows = [];
   let cumulative = 0;
   for (let i = 1; i <= months; i++) {
     const m = shiftMonth(base, i);
-    const stillPaying = inst.filter(t => t.installment.of - t.installment.n >= i);
-    const instThis = sum(stillPaying);
+    const stillPaying = inst.filter(r => r.left >= i);
+    const instThis = stillPaying.reduce((s, r) => s + ils(r.t), 0);
     const out = fixedMonthly + variable + instThis;
     const net = medIn - out;
     cumulative += net;
@@ -148,7 +175,11 @@ export function volatility(txs, minMonths = 3) {
     const series = months.map(m => mm.get(m) || 0);
     const active = series.filter(v => v > 0);
     if (active.length < minMonths) continue;
-    const m = mean(series), sd = stdev(series);
+    // היציבות נמדדת מחודש הלידה של הקטגוריה — אפסים מלפני שהתחילה
+    // לחיות אינם תנודתיות, הם היעדר, והם ניפחו cv לקטגוריות חדשות
+    const born = series.findIndex(v => v > 0);
+    const lived = series.slice(born);
+    const m = mean(lived), sd = stdev(lived);
     const [dk, ck] = k.split('/');
     out.push({
       key: k, dept: dk, cat: ck, label: catLabel(dk, ck),
@@ -251,10 +282,10 @@ export function balances(txs, accounts, today = new Date()) {
     // ואילך נספרות. עם > במקום >= הוצאה שנרשמת מיד אחרי העדכון לא הייתה
     // מזיזה את היתרה, וזה נראה כמו תקלה.
     const since = anchored
-      ? rows.filter(t => t.account === a.id && t.dateBuy >= a.balanceDate && t.dateBuy <= iso)
+      ? rows.filter(t => effectOn(a, t) !== 0 && t.dateBuy >= a.balanceDate && t.dateBuy <= iso)
       : [];
-    const inflow = since.filter(t => flowOf(t.dept) === 'in').reduce((s, t) => s + ils(t), 0);
-    const outflow = since.filter(t => flowOf(t.dept) === 'out').reduce((s, t) => s + ils(t), 0);
+    const inflow = since.reduce((s, t) => s + Math.max(0, effectOn(a, t)), 0);
+    const outflow = since.reduce((s, t) => s + Math.max(0, -effectOn(a, t)), 0);
     return {
       id: a.id, name: a.name, slot: a.slot, type: a.type,
       anchored,
@@ -356,16 +387,17 @@ export function safeToSpend(txs, budget, month, upcomingTotal = 0, today = new D
  */
 export function rollover(txs, budgets, month, back = 12) {
   const byKey = new Map();
-  const months = monthsRange(month, back);
 
   for (const b of budgets) {
     if (!b.rollover || !b.amount) { byKey.set(b.key, 0); continue; }
     // מגלגלים רק מהחודש שבו התקציב הוגדר. בלי העוגן הזה, הפעלת גלגול
-    // "מגלה" יתרה של חודשים שבהם התקציב כלל לא היה קיים — מתנה מדומה
-    // שהופכת את המספר לחסר משמעות בדיוק ברגע שמתחילים להשתמש בו.
+    // "מגלה" יתרה של חודשים שבהם התקציב כלל לא היה קיים — מתנה מדומה.
+    // החלון מתרחב לפי since — אחרת תקציב ותיק מ-13+ חודשים היה מאבד
+    // בשקט את העודפים שמעבר לחלון הקבוע.
     const from = b.since || month;
+    const span = Math.max(back, monthsBetween(from, month) + 1);
     let carry = 0;
-    for (const m of months.slice(0, -1)) {
+    for (const m of monthsRange(month, span).slice(0, -1)) {
       if (m < from) continue;
       const item = budgetStatus(txs, [b], m).items[0];
       if (!item) continue;
@@ -405,18 +437,34 @@ export function allTags(txs) {
  * ואילך, ואחורה מוחסרים הימים שבין התאריך המבוקש לעוגן — לא כולל
  * את יום העוגן עצמו, שתנועותיו קרו אחרי רגע העיגון.
  */
+/**
+ * ההשפעה של תנועה על חשבון נתון.
+ * העברה (transfer) עוזבת את חשבון המקור — היא לא הוצאה בסטטיסטיקה,
+ * אבל הכסף כן יצא מהחשבון. משיכת מזומן היא ההעברה היחידה שהיעד שלה
+ * ידוע (הארנק), ולכן היא גם נכנסת לחשבון המזומן. בלי זה יתרות
+ * החשבונות נסחפו מהמציאות כבר מהמשיכה הראשונה.
+ */
+function effectOn(account, t) {
+  const f = flowOf(t.dept);
+  if (t.account === account.id) {
+    if (f === 'in') return ils(t);
+    return -ils(t);                       // הוצאה וגם העברה — הכסף עוזב את המקור
+  }
+  if (account.type === 'cash' && t.dept === 'transfer' && t.cat === 'withdrawal') return ils(t);
+  return 0;
+}
+
 export function balanceAt(txs, account, dateISO) {
   if (!account.balanceDate) return null;
-  const val = (t) => flowOf(t.dept) === 'in' ? ils(t) : flowOf(t.dept) === 'out' ? -ils(t) : 0;
-  const rows = live(txs).filter(t => t.account === account.id);
+  const rows = live(txs).filter(t => effectOn(account, t) !== 0);
   if (dateISO >= account.balanceDate) {
     return (account.balance || 0) + rows
       .filter(t => t.dateBuy >= account.balanceDate && t.dateBuy <= dateISO)
-      .reduce((s, t) => s + val(t), 0);
+      .reduce((s, t) => s + effectOn(account, t), 0);
   }
   return (account.balance || 0) - rows
     .filter(t => t.dateBuy > dateISO && t.dateBuy < account.balanceDate)
-    .reduce((s, t) => s + val(t), 0);
+    .reduce((s, t) => s + effectOn(account, t), 0);
 }
 
 /** סדרת שווי נקי חודשית — סוף כל חודש, והחודש הנוכחי עד היום */
@@ -528,11 +576,11 @@ export function projectMonth(txs, month, recurring = [], today = new Date()) {
     return { spentSoFar, projected: spentSoFar, daysLeft: 0, remainingFixed: 0, remainingVariable: 0, day, dim };
   }
 
-  // קבועים שעוד לא נחתו החודש
+  // קבועים שעוד לא נחתו החודש. בכוונה בלי תנאי "היום הרגיל כבר עבר" —
+  // חיוב קבוע שמאחר עדיין צפוי לרדת החודש, והשמטתו הטתה את התחזית מטה.
   const seen = new Set(rows.map(t => (t.merchant || '').trim()));
   const remainingFixed = recurring
     .filter(r => !seen.has((r.merchant || '').trim()))
-    .filter(r => +r.lastDate.slice(8) > day)
     .reduce((s, r) => s + r.monthly, 0);
 
   // קצב משתנה מהחודשים הקודמים
@@ -580,9 +628,12 @@ export function upcoming(txs, recurring = [], fixed = [], days = 30, today = new
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const end = new Date(start); end.setDate(end.getDate() + days);
 
+  // יום 29-31 נצמד לסוף החודש האמיתי של אותו חודש — לא ל-28 שרירותי,
+  // שהזיז חיובי סוף-חודש יומיים ולפעמים הכניס/הוציא אותם מהחלון בטעות
   const nextOccurrence = (dayOfMonth) => {
-    const d = new Date(start.getFullYear(), start.getMonth(), Math.min(dayOfMonth, 28));
-    if (d < start) d.setMonth(d.getMonth() + 1);
+    const at = (y, m) => new Date(y, m, Math.min(dayOfMonth || 1, new Date(y, m + 1, 0).getDate()));
+    let d = at(start.getFullYear(), start.getMonth());
+    if (d < start) d = at(start.getFullYear(), start.getMonth() + 1);
     return d;
   };
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -597,20 +648,19 @@ export function upcoming(txs, recurring = [], fixed = [], days = 30, today = new
   for (const r of recurring) {
     if (fixedNames.has((r.merchant || '').trim())) continue;   // כבר נספר כהוצאה קבועה
     if (r.daysSince > 45) continue;                            // כנראה בוטל
-    const day = +r.lastDate.slice(8);
+    const day = +(r.lastDate || '').slice(8) || 1;
     const when = nextOccurrence(day);
     if (when <= end) out.push({ label: r.merchant, amount: r.monthly, date: iso(when), kind: 'recurring', dept: r.dept, cat: r.cat });
   }
 
-  for (const t of live(txs)) {
-    if (!t.installment || t.installment.of <= t.installment.n) continue;
-    if (flowOf(t.dept) !== 'out') continue;
-    const when = nextOccurrence(+t.dateBuy.slice(8));
+  // תשלומים — מיושנים ומאוחדים, אחרת סדרות שנגמרו מזמן ממשיכות להופיע
+  for (const rec of activeInstallments(txs, today)) {
+    const when = nextOccurrence(+rec.t.dateBuy.slice(8));
     if (when <= end) {
       out.push({
-        label: t.merchant || catLabel(t.dept, t.cat), amount: ils(t), date: iso(when),
-        kind: 'installment', dept: t.dept, cat: t.cat,
-        note: `תשלום ${t.installment.n + 1} מתוך ${t.installment.of}`,
+        label: rec.t.merchant || catLabel(rec.t.dept, rec.t.cat), amount: ils(rec.t), date: iso(when),
+        kind: 'installment', dept: rec.t.dept, cat: rec.t.cat,
+        note: `תשלום ${Math.min(rec.aged + 1, rec.of)} מתוך ${rec.of}`,
       });
     }
   }
@@ -619,20 +669,6 @@ export function upcoming(txs, recurring = [], fixed = [], days = 30, today = new
   return { items: out, total: out.reduce((s, x) => s + x.amount, 0), days };
 }
 
-/* ==================== סיכום לכותרת ==================== */
-
-export function headline(txs, month, budget, recurring = [], today = new Date()) {
-  const rate = runRate(txs, month, today);
-  const base = baseline(txs, month);
-  const attr = attribution(txs, shiftMonth(month, -1), month);
-  const conc = concentration(txs, month);
-  const fc = forecast(txs, recurring, 3, month);
-  const onPace = budget ? rate.projected / budget : null;
-  return {
-    rate, baseline: base, attribution: attr, concentration: conc, forecast: fc,
-    onPace,
-    verdict: !budget ? null
-      : rate.projected > budget * 1.05 ? 'over'
-      : rate.projected < budget * 0.9 ? 'under' : 'on',
-  };
-}
+// headline() הישן הוסר: הוא השווה חודש קודם מלא מול חודש נוכחי חלקי —
+// באמצע חודש הכל נראה כאילו "ירד". הממשק משתמש ב-projectMonth וב-attribution
+// ישירות, עם השוואות הוגנות בלבד.
