@@ -1,6 +1,13 @@
-// Service Worker — עבודה אופליין + קליטת צילומי מסך משותפים מהטלפון.
+// Service Worker — עבודה אופליין + קליטת צילומי מסך משותפים.
+//
+// אסטרטגיה: רשת קודם, מטמון כרשת ביטחון.
+//
+// הגרסה הקודמת עשתה ההפך — מטמון קודם — וזו הייתה טעות: המשתמש המשיך
+// להריץ קוד ישן ימים אחרי שהתיקון נפרס, בלי שום סימן. באפליקציה של
+// 100KB החיסכון בזמן טעינה זניח מול המחיר של להריץ גרסה מיושנת.
+// אופליין עדיין עובד במלואו, כי כל כישלון רשת נופל למטמון.
 
-const CACHE = 'kesef-v3';
+const CACHE = 'kesef-v5';
 const SHELL = [
   './', './index.html', './style.css', './app.js', './db.js', './ai.js',
   './taxonomy.js', './charts.js', './insights.js', './stats.js', './crypto.js',
@@ -10,29 +17,35 @@ const SHELL = [
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE)
-      .then(c => Promise.allSettled(SHELL.map(u => c.add(u))))
+      .then(c => Promise.allSettled(SHELL.map(u => c.add(new Request(u, { cache: 'reload' })))))
       .then(() => self.skipWaiting()),
   );
 });
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim()),
-  );
+  e.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    await self.clients.claim();
+    // מודיעים ללשוניות פתוחות שיש קוד חדש, כדי שיציעו רענון
+    for (const c of await self.clients.matchAll({ type: 'window' })) {
+      c.postMessage({ type: 'sw-updated', cache: CACHE });
+    }
+  })());
 });
 
 /* ---------- IndexedDB מינימלי לאחסון הצילום המשותף ---------- */
 
 function idb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('kesef', 4);
+    const req = indexedDB.open('kesef', 5);
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const s of ['tx', 'rules', 'fixed', 'meta', 'pending', 'snapshots', 'accounts', 'streams']) {
+      for (const s of ['tx', 'rules', 'fixed', 'meta', 'pending', 'snapshots', 'accounts', 'budgets', 'streams']) {
         if (!db.objectStoreNames.contains(s)) {
-          db.createObjectStore(s, { keyPath: s === 'meta' ? 'k' : (s === 'rules' ? 'key' : 'id') });
+          db.createObjectStore(s, {
+            keyPath: s === 'meta' ? 'k' : (s === 'rules' ? 'key' : (s === 'budgets' ? 'key' : 'id')),
+          });
         }
       }
     };
@@ -57,10 +70,21 @@ async function stashPending(files) {
 
 /* ---------- ניתוב ---------- */
 
+/** רשת עם תקרת זמן — כדי שרשת גרועה לא תתקע את האפליקציה */
+function fromNetwork(request, ms = 4000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms);
+    fetch(request).then(
+      (res) => { clearTimeout(timer); resolve(res); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
-  // יעד השיתוף — הטלפון שולח לכאן POST עם התמונה
+  // יעד השיתוף — אנדרואיד שולח לכאן POST עם התמונה
   if (e.request.method === 'POST' && url.pathname.endsWith('/share')) {
     e.respondWith((async () => {
       try {
@@ -68,30 +92,29 @@ self.addEventListener('fetch', (e) => {
         const files = form.getAll('image').filter(f => f && f.size);
         if (files.length) await stashPending(files);
       } catch (_) { /* ממשיכים בכל מקרה */ }
-      const base = url.pathname.replace(/share$/, '');
-      return Response.redirect(base + '?shared=1', 303);
+      return Response.redirect(url.pathname.replace(/share$/, '') + '?shared=1', 303);
     })());
     return;
   }
 
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
 
-  // ניווט: רשת קודם, מטמון כגיבוי
-  if (e.request.mode === 'navigate') {
-    e.respondWith(
-      fetch(e.request).catch(() => caches.match('./index.html').then(r => r || caches.match('./'))),
-    );
-    return;
-  }
-
-  // נכסים: מטמון קודם, ורענון ברקע
-  e.respondWith(
-    caches.match(e.request).then(hit => {
-      const net = fetch(e.request).then(res => {
-        if (res && res.ok) caches.open(CACHE).then(c => c.put(e.request, res.clone()));
-        return res;
-      }).catch(() => hit);
-      return hit || net;
-    }),
-  );
+  e.respondWith((async () => {
+    try {
+      const res = await fromNetwork(e.request);
+      if (res && res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
+      }
+      return res;
+    } catch {
+      const hit = await caches.match(e.request);
+      if (hit) return hit;
+      if (e.request.mode === 'navigate') {
+        return (await caches.match('./index.html')) || (await caches.match('./')) ||
+          new Response('אופליין ואין עותק שמור', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      }
+      throw new Error('offline');
+    }
+  })());
 });

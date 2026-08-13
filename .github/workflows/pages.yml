@@ -42,6 +42,13 @@ jobs:
              charts.js insights.js stats.js crypto.js sw.js \
              manifest.webmanifest _site/
           cp icons/*.png _site/icons/
+
+          # חותמת גרסה — כדי שתמיד אפשר לדעת איזו גרסה באמת רצה על המכשיר,
+          # ושהמטמון של ה-Service Worker יתבטל בכל פריסה.
+          BUILD="${GITHUB_SHA::7}"
+          sed -i "s/const CACHE = 'kesef-v5';/const CACHE = 'kesef-$BUILD';/" _site/sw.js
+          sed -i "s/__BUILD__/$BUILD/" _site/app.js
+          echo "build: $BUILD"
           ls -la _site
 
       - uses: actions/upload-pages-artifact@v3

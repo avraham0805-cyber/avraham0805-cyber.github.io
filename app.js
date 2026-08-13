@@ -128,7 +128,16 @@ async function init() {
   if (qs.has('shot')) openShot();
 
   DB.maybeSnapshot('פתיחת אפליקציה').catch(() => {});
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // כשקוד חדש נכנס לתוקף, מציעים רענון במקום להשאיר גרסה ישנה רצה
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data?.type === 'sw-updated' && !S.updatePrompted) {
+        S.updatePrompted = true;
+        showUpdateBar();
+      }
+    });
+  }
 }
 
 async function reload() {
@@ -174,6 +183,17 @@ function armAutoLock() {
   ['pointerdown', 'keydown', 'visibilitychange'].forEach(ev =>
     document.addEventListener(ev, reset, { passive: true }));
   reset();
+}
+
+/** פס עדכון — גרסה חדשה כבר ירדה וממתינה לרענון */
+function showUpdateBar() {
+  const bar = document.createElement('div');
+  bar.className = 'note info';
+  bar.style.cssText = 'position:fixed;inset-inline:12px;bottom:calc(78px + env(safe-area-inset-bottom,0px));z-index:80;box-shadow:0 8px 24px -10px rgba(0,0,0,.4)';
+  bar.innerHTML = `${icon('info')}<span class="grow">יש גרסה חדשה של האפליקציה</span>
+    <button id="do-reload" style="font-weight:660;text-decoration:underline">רענן</button>`;
+  document.body.appendChild(bar);
+  bar.querySelector('#do-reload').onclick = () => location.reload();
 }
 
 function showStorageFailure(err) {
@@ -1587,7 +1607,10 @@ async function renderSettings() {
   $('#st-budget').value = S.budget ? S.budget / 100 : '';
   $('#st-key').value = S.hasKey ? '••••••••••••••••' : '';
   $('#st-key').placeholder = S.hasKey ? 'מפתח שמור ומוצפן' : 'AIza…';
-  $('#st-version').textContent = 'כסף · v3';
+  // BUILD מוחלף בזמן הפריסה בגיבוב הקומיט. אם הוא נשאר כמות שהוא —
+  // זו הרצה מקומית ולא גרסה שנפרסה.
+  const BUILD = '__BUILD__';
+  $('#st-version').textContent = BUILD.startsWith('__') ? 'כסף · מקומי' : `כסף · ${BUILD}`;
 
   const pinOn = !!(await DB.setting('dekWrapped'));
   $('#st-security').innerHTML = `
